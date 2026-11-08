@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bc492e16..e6d79e9e 100644
+index 19fa28a6..6a33ad2a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -394,6 +394,8 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
@@ -11,7 +11,7 @@ index bc492e16..e6d79e9e 100644
                            src/kernels/cuda/fused_gr.cu
                            src/kernels/cuda/cvec.cu
                            src/kernels/cuda/qsa_decode_attn.cu
-@@ -1210,6 +1212,12 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
+@@ -1212,6 +1214,12 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
    target_include_directories(kv_q4_parity PRIVATE ${_strata_gpu_include_directories})
    target_link_libraries(kv_q4_parity PRIVATE strata_kernels ${_strata_gpu_runtime_target})
    add_test(NAME kv_q4_parity COMMAND kv_q4_parity)
@@ -24,7 +24,7 @@ index bc492e16..e6d79e9e 100644
    # the verify window's one-launch forms (hyper-connection write, PLE post-ops with the commit's
    # history snapshots) vs the per-token launches they replace, bitwise (GPU, synthetic, no model)
    add_executable(verify_batch_parity src/kernels/verify_batch_parity.cpp)
-@@ -2085,6 +2093,10 @@ if(STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT S
+@@ -2087,6 +2095,10 @@ if(STRATA_NATIVE_EXPERTS AND (STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP) AND NOT S
      target_compile_definitions(strata_poly_mmq PUBLIC STRATA_POLY_GDN_MMA=1)
      target_link_libraries(strata_poly_mmq PUBLIC strata_gdn_mma)
  
@@ -373,7 +373,7 @@ index e782035d..1204e931 100644
  };
  
 diff --git a/include/strata/poly/kernels.hpp b/include/strata/poly/kernels.hpp
-index 03425edf..5b585682 100644
+index 5d775297..3e7429df 100644
 --- a/include/strata/poly/kernels.hpp
 +++ b/include/strata/poly/kernels.hpp
 @@ -228,8 +228,22 @@ void head_norm_rope(const float* x, int x_stride, const float* w, float* y, int
@@ -400,7 +400,7 @@ index 03425edf..5b585682 100644
  /// only the last `window` of them.  q: n_head * dim a token.  kcache and vcache: fp16, kv_heads * dim a row; the
  /// heads read a row's keys and values in turn, n_head / kv_heads heads each.  With `ring`, the sequence's row p
 diff --git a/setup.py b/setup.py
-index e97f4b9f..f0340122 100644
+index 4e20da6a..c23bf0b8 100644
 --- a/setup.py
 +++ b/setup.py
 @@ -224,9 +224,8 @@ CUDA12_WHEELS = ["nvidia-cublas-cu12==12.9.1.4", "nvidia-cuda-runtime-cu12==12.9
@@ -415,7 +415,7 @@ index e97f4b9f..f0340122 100644
  REQUIREMENTS = ROOT / "requirements.txt"   # the same packages and their dependencies, pinned (#214)
  
  # NVFP4 experts (MODEL-UPDATE Phase 4; the engine path is ported from sergqwer/strata-nvfp4, MIT).  Ready-made PolyStrata
-@@ -5947,7 +5946,8 @@ UD_FIT_MIN_SLACK_MIB = 64         # at least a few cache slots beside the estima
+@@ -6017,7 +6016,8 @@ UD_FIT_MIN_SLACK_MIB = 64         # at least a few cache slots beside the estima
  UD_FIT_CARD_GB = 9.5              # the check is for cards up to here
  UD_FIT_RUNTIME_MIB = 250          # CUDA / HIP: the runtime's own context (the SYCL measurement above has none of it)
  UD_FIT_ENGINE_RESERVE_MIB = 300   # the reserve the engine settles on when none is given and the card is tight
@@ -425,7 +425,7 @@ index e97f4b9f..f0340122 100644
  UD_FIT_CTX_STEPS = (8192, 6144, 4608)
  
  
-@@ -7619,9 +7619,11 @@ def main() -> int:
+@@ -7706,9 +7706,11 @@ def main() -> int:
      ap.add_argument("--rope-scale", type=float,
                      help="the extension factor (default: the final context over the trained 262144, at least 1 - "
                           "1.5 for 384K, 2 for 512K, 1 inside the trained range)")
@@ -439,7 +439,7 @@ index e97f4b9f..f0340122 100644
      ap.add_argument("--vision", choices=["yes", "no", "none", "gpu", "cpu"],
                      help="let the model read images (yes = the encoder on the GPU)")
      ap.add_argument("--vision-tokens", type=int, metavar="N",
-@@ -8234,12 +8236,19 @@ def main() -> int:
+@@ -8321,12 +8323,19 @@ def main() -> int:
      if ctx > 8192 and not a.kv and not a.yes:
          say()
          say("  KV cache precision (the model's memory of the conversation):")
@@ -2700,10 +2700,10 @@ index 00000000..ec9bf9aa
 +    return 1;
 +}
 diff --git a/src/poly/engine.cpp b/src/poly/engine.cpp
-index e1579448..e0345260 100644
+index 18dd4dbb..c00309bb 100644
 --- a/src/poly/engine.cpp
 +++ b/src/poly/engine.cpp
-@@ -1187,6 +1187,11 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
+@@ -1602,6 +1602,11 @@ std::unique_ptr<Engine> Engine::open(const Options& o) {
      if (name != "gemma4" && (o.kv_format == KvFmt::kInt8 || o.kv_format == KvFmt::kInt8K))
          throw std::runtime_error("--kv int8 and --kv int8k are Gemma 4's; for a qwen35moe or kolibri1 model use "
                                   "--kv q8_0 (this is a '" + name + "' model)");
@@ -2716,23 +2716,23 @@ index e1579448..e0345260 100644
      if (o.cache_bias > 0.f && !qwen35)
          throw std::runtime_error("--cache-bias is supported for qwen35moe models; this is a '" + name + "' model");
 diff --git a/src/poly/engine.hpp b/src/poly/engine.hpp
-index e8a88be1..04ad514e 100644
+index c6e114fd..976feca2 100644
 --- a/src/poly/engine.hpp
 +++ b/src/poly/engine.hpp
-@@ -44,7 +44,7 @@ struct Likeliest;
- /// deltas in two arrays, which a reader can take four codes to a load, and int8k keeps only the keys' side
+@@ -46,7 +46,7 @@ struct Likeliest;
  /// quantized.  q8_0 is qwen35moe's; int8 and int8k are Gemma 4's - the two readers are not the same arithmetic,
- /// so a model has one or the other rather than a choice between them.
--enum class KvFmt { kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3 };
-+enum class KvFmt { kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3, kTurbo2 = 4, kTurbo3 = 5 };
+ /// so a model has one or the other rather than a choice between them.  Auto is resolved from model
+ /// geometry before allocation on Metal; other backends default to fp16.
+-enum class KvFmt { kAuto = -1, kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3 };
++enum class KvFmt { kAuto = -1, kFp16 = 0, kQ8_0 = 1, kInt8 = 2, kInt8K = 3, kTurbo2 = 4, kTurbo3 = 5 };
  
  struct Options {
-     std::string model;
+ #if defined(STRATA_GPU_METAL)
 diff --git a/src/poly/kernels.cu b/src/poly/kernels.cu
-index 43b262b0..d7974a60 100644
+index ae254ce7..17d2b74e 100644
 --- a/src/poly/kernels.cu
 +++ b/src/poly/kernels.cu
-@@ -23,6 +23,20 @@
+@@ -25,6 +25,20 @@
  #include <string>
  
  namespace strata::poly {
@@ -2753,7 +2753,7 @@ index 43b262b0..d7974a60 100644
  namespace {
  
  constexpr int WARP = 32;
-@@ -1148,9 +1162,43 @@ __device__ __forceinline__ int attn_span(long long p, int tokens, int window, lo
+@@ -1150,9 +1164,43 @@ __device__ __forceinline__ int attn_span(long long p, int tokens, int window, lo
      return int(lo_last - *lo) + n;
  }
  
@@ -2798,7 +2798,7 @@ index 43b262b0..d7974a60 100644
  __device__ __forceinline__ void attn_scores(const float* __restrict__ q, const half* __restrict__ k,
                                              const int8_t* __restrict__ kcodes, const uint16_t* __restrict__ kscales,
                                              float* __restrict__ score, int n_keys, int dim, float scale) {
-@@ -1165,12 +1213,10 @@ __device__ __forceinline__ void attn_scores(const float* __restrict__ q, const h
+@@ -1167,12 +1215,10 @@ __device__ __forceinline__ void attn_scores(const float* __restrict__ q, const h
      }
      for (int d = SCORE_VALUES * lane; d < dim; d += SCORE_VALUES * WARP) {
          float x[SCORE_VALUES];
@@ -2814,7 +2814,7 @@ index 43b262b0..d7974a60 100644
          } else {
              const unsigned long long bits = *reinterpret_cast<const unsigned long long*>(k + d);
  #pragma unroll
-@@ -1194,13 +1240,13 @@ __device__ __forceinline__ void attn_scores(const float* __restrict__ q, const h
+@@ -1196,13 +1242,13 @@ __device__ __forceinline__ void attn_scores(const float* __restrict__ q, const h
  }
  
  // attn_scores() for n queries: N at a time, then what is left by halves of N.
@@ -2831,7 +2831,7 @@ index 43b262b0..d7974a60 100644
  }
  
  // score[token][head][i] = scale * (q[token][head] . the key of the head's group in the i-th row of the launch's
-@@ -1209,7 +1255,7 @@ __device__ __forceinline__ void attn_scores_by(int n, const float* __restrict__
+@@ -1211,7 +1257,7 @@ __device__ __forceinline__ void attn_scores_by(int n, const float* __restrict__
  // once between them: the cache of a long context is what the kernel waits for.  A thread sums its products with
  // a query, for up to SCORE_QUERIES heads of a token at a time, and a query's 32 sums are added in pairs.  A
  // token gets scores for the rows of the span it does not attend as well, which the softmax leaves out.
@@ -2840,7 +2840,7 @@ index 43b262b0..d7974a60 100644
  __global__ void attn_score_kernel(const float* __restrict__ q, const half* __restrict__ kcache,
                                    float* __restrict__ score, int n_keys, int dim, int n_head, int kv_heads,
                                    long long pos, int first, int tokens, float scale, int window, int ring,
-@@ -1230,7 +1276,7 @@ __global__ void attn_score_kernel(const float* __restrict__ q, const half* __res
+@@ -1232,7 +1278,7 @@ __global__ void attn_score_kernel(const float* __restrict__ q, const half* __res
      q += (size_t(first) * n_head + g * per) * dim;   // the group's heads of the launch's first token
      score += size_t(g) * per * n_keys + key;         // and their scores of the row
      for (int t = 0; t < tokens; ++t, q += size_t(n_head) * dim, score += size_t(n_head) * n_keys)
@@ -2849,7 +2849,7 @@ index 43b262b0..d7974a60 100644
  }
  
  // The sums of N scores a lane holds parts of, added over the warp in the tree attn_scores() adds one score in: at
-@@ -1264,7 +1310,7 @@ __device__ __forceinline__ float scores_sum(float* v, int lane, int* which) {
+@@ -1266,7 +1312,7 @@ __device__ __forceinline__ float scores_sum(float* v, int lane, int* which) {
  // order and the same sums, but a warp has SCORE_KEYS rows of a group, and a token's queries stay in its registers
  // while it goes through them.  The other kernel read them again for every row, and passed every score's parts from lane to
  // lane on its own: those reads and moves were what it waited for.
@@ -2858,7 +2858,7 @@ index 43b262b0..d7974a60 100644
  __global__ void __launch_bounds__(SCORE_WARPS * WARP)
  attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcache, float* __restrict__ score,
                        int n_keys, int n_head, int kv_heads, long long pos, int first, int tokens, float scale,
-@@ -1299,11 +1345,10 @@ attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcac
+@@ -1301,11 +1347,10 @@ attn_score_reg_kernel(const float* __restrict__ q, const half* __restrict__ kcac
  #pragma unroll
              for (int s = 0; s < STEPS; ++s) {
                  float x[SCORE_VALUES];
@@ -2872,7 +2872,7 @@ index 43b262b0..d7974a60 100644
                  } else {
                      const unsigned long long bits = *reinterpret_cast<const unsigned long long*>(k + 128 * s);
  #pragma unroll
-@@ -1370,55 +1415,41 @@ __global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int
+@@ -1372,55 +1417,41 @@ __global__ void attn_softmax_kernel(float* score, int n_keys, long long pos, int
  // A thread's sums of attn_value_kernel for N queries: over its share of the span's rows from `row` of the cache
  // on, of a row's value with each query's weight there.  w: the weights of the lane's query; the warp's first N
  // lanes have the N queries between them.
@@ -2942,7 +2942,7 @@ index 43b262b0..d7974a60 100644
  }
  
  // out[token][head][d] = sum over the rows of score[token][head][row] * the value of the head's group in that
-@@ -1429,7 +1460,7 @@ __device__ __forceinline__ void attn_values_for(int n, const float* __restrict__
+@@ -1431,7 +1462,7 @@ __device__ __forceinline__ void attn_values_for(int n, const float* __restrict__
  // for the block's queries; their weights of the row come in one read as well, a lane a query, and the warp
  // passes them around.  A token's shares are counted from its own first row and added in their order, so that it
  // comes out the same whatever tokens the launch has beside it.
@@ -2951,7 +2951,7 @@ index 43b262b0..d7974a60 100644
  __global__ void attn_value_kernel(const float* __restrict__ score, const half* __restrict__ vcache,
                                    float* __restrict__ out, int n_keys, int dim, int n_head, int kv_heads,
                                    long long pos, int first, int tokens, int window, int ring, long long last,
-@@ -1450,10 +1481,9 @@ __global__ void attn_value_kernel(const float* __restrict__ score, const half* _
+@@ -1452,10 +1483,9 @@ __global__ void attn_value_kernel(const float* __restrict__ score, const half* _
      const int mine = q0 + min(lane % VALUE_QUERIES, live - 1);
      const int dd = min(d, dim - 1);   // a lane past the last value reads one all the same
      float sums[VALUE_QUERIES];
@@ -2964,7 +2964,7 @@ index 43b262b0..d7974a60 100644
          ring > 0 ? (lo + s) % ring : lo + s, ring, span, sums);
      for (int i = 0; i < live; ++i) {
          long long own;   // the first row of the query's token: the thread's rows are this share of the token's
-@@ -1631,7 +1661,7 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
+@@ -1633,7 +1663,7 @@ attn_join_kernel(const float* __restrict__ part, float* __restrict__ out, int n_
  // to lane, and so waited on the passing (Nsight Compute).  A block has TILES of the blocks of VALUE_QUERIES
  // queries, which read the cache's values once between them.  The products go in the rows' order: the sums are
  // the other kernel's to the bit.
@@ -2973,7 +2973,7 @@ index 43b262b0..d7974a60 100644
  __global__ void __launch_bounds__(VALUE_DIMS * VALUE_SHARES)
  attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcache, float* __restrict__ out, int n_keys,
                      int dim, int n_head, int kv_heads, long long pos, int first, int tokens, int window, int ring,
-@@ -1650,9 +1680,10 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
+@@ -1652,9 +1682,10 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
      const int span = attn_span(p, tokens, window, last, &lo);
      const size_t width = size_t(kv_heads) * dim;
      const half* v = vcache + size_t(g) * dim + min(d, dim - 1);   // a lane past the last value reads one all the same
@@ -2987,7 +2987,7 @@ index 43b262b0..d7974a60 100644
      const float* w[TILES];   // a tile past the group's last reads the block's first again, for nothing
  #pragma unroll
      for (int t = 0; t < TILES; ++t)
-@@ -1665,10 +1696,8 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
+@@ -1667,10 +1698,8 @@ attn_value_t_kernel(const float* __restrict__ wt, const half* __restrict__ vcach
      long long row = ring > 0 ? (lo + s) % ring : lo + s;
      for (int j = s; j < span; j += VALUE_SHARES) {
          float x;
@@ -3000,7 +3000,7 @@ index 43b262b0..d7974a60 100644
  #pragma unroll
          for (int t = 0; t < TILES; ++t) {
              const float4 a = *reinterpret_cast<const float4*>(w[t] + size_t(j) * VALUE_QUERIES);
-@@ -2827,6 +2856,53 @@ void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const l
+@@ -2881,6 +2910,53 @@ void store_q8_at(const float* x, int8_t* codes, uint16_t* scales, int n, const l
      store_q8_at_kernel<<<grid(all, 256), 256, 0, cs(stream)>>>(x, codes, (half*) scales, n, rows, nb, at, ring);
  }
  
@@ -3054,7 +3054,7 @@ index 43b262b0..d7974a60 100644
  void dsa_attend(void* blas, const float* q, const uint16_t* cache, const int32_t* sel, int sel_stride, int top_rows,
                  int kpool, int64_t pos, int rows, int dense_rows, float* keys, float* score, int chunk, float* out,
                  int rank, int n_head, float scale, void* stream) {
-@@ -3018,24 +3094,41 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
+@@ -3090,24 +3166,41 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
          // The queries in registers where a head has 128, 256 or 512 values and a group 4 or 8 heads.  With fewer
          // heads a group the cache is the most of what is read and the other kernel is as fast.  A q8 key cache
          // takes the same kernel the fp16 cache does, which reads it as Q8_0.
@@ -3107,7 +3107,7 @@ index 43b262b0..d7974a60 100644
                  q, (const half*) kcache, score, keys, dim, n_head, kv_heads, (long long) pos, first, c, scale,
                  window, ring, last, at);
          // the weights as attn_value_t_kernel reads them, behind the scores where the buffer has room for them.
-@@ -3059,36 +3152,65 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
+@@ -3131,36 +3224,65 @@ void attend(const float* q, const uint16_t* kcache, const uint16_t* vcache, int6
          }
  #endif
          const int dims = grid(dim, VALUE_DIMS);
@@ -3196,7 +3196,7 @@ index 43b262b0..d7974a60 100644
      }
  }
  
-@@ -3104,6 +3226,150 @@ __global__ void dequant_q8_kernel(const int8_t* __restrict__ codes, const uint16
+@@ -3176,6 +3298,150 @@ __global__ void dequant_q8_kernel(const int8_t* __restrict__ codes, const uint16
      out[(size_t) blockIdx.y * width + i] = __float2half((float) codes[at + i] * d);
  }
  
@@ -3347,10 +3347,24 @@ index 43b262b0..d7974a60 100644
  size_t attend_split_floats(int chunk, int n_head, int max_rows, int dim) {
      return size_t(chunk) * n_head * grid(size_t(max_rows), SPLIT_KEYS) * (dim + 2);
  }
-@@ -3815,13 +4081,37 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
-             const long long row = ring > 0 ? (lo0 + k0) % ring : lo0 + k0;
-             m = (int) std::min<long long>(std::min(block, n_keys - k0), ring > 0 ? ring - row : n_keys);
-             if ((kq || vq) && m > work_rows) m = work_rows;   // the workspace's rows cap the block
+@@ -3869,9 +4135,10 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
+     const size_t chunk_max = std::max<size_t>(16, kAttendResults / (size_t(n_head) * dim * sizeof(float)));
+     const size_t cells_f = ((score_floats > qres ? score_floats - qres : 0) / 2) & ~size_t(3);   // a multiple of 4: the floats are read 4 at a time
+     // level 2: the head's values in whole blocks of 32 for the scales, and a block of at least 64 keys at the largest chunk
+-    const bool own = level == 2 && kq && vq && dim % 32 == 0 && width % 32 == 0 && score_floats >= 4 * qres &&
+-                     cells_f / n_head >= 64 * chunk_max;
+-    const bool f32 = own || (level >= 1 && kq && vq && work_rows_f >= 256 && score_floats >= 4 * qres);
++    const bool own = level == 2 && kq && vq && kq8.fmt == 1 && vq8.fmt == 1 && dim % 32 == 0 && width % 32 == 0 &&
++                     score_floats >= 4 * qres && cells_f / n_head >= 64 * chunk_max;   // a packed turbo cache's rows are not q8_0 blocks
++    const bool f32 = own || (level >= 1 && kq && vq && kq8.fmt == 1 && vq8.fmt == 1 && work_rows_f >= 256 &&
++                            score_floats >= 4 * qres);
+     const size_t cells = f32 ? cells_f : score_floats / 3 * 2;
+     float* weight32 = score + cells;
+     float* qg32 = score + 2 * cells;   // the grouped queries as floats, in the scratch past the scores and weights
+@@ -3963,13 +4230,37 @@ void attend_batch(void* blas, const float* q, const uint16_t* kcache, const uint
+                 continue;
+             }
+ #endif
 -            // a q8 cache's rows are dequantized into the workspace the products read as an fp16 cache
 -            if (kq)
 -                dequant_q8_kernel<<<dim3(grid(width, 256), m), 256, 0, cs(stream)>>>(kq8.codes, kq8.scales,
@@ -3680,11 +3694,11 @@ index e926f80f..76ae350a 100644
      void window_runs(int64_t pos, F&& f) const;
  
 diff --git a/src/poly/main.cpp b/src/poly/main.cpp
-index f2178306..83d9f150 100644
+index d63ed9a3..93eeab2d 100644
 --- a/src/poly/main.cpp
 +++ b/src/poly/main.cpp
-@@ -1082,7 +1082,10 @@ void usage() {
-                  "                         different answers; qwen35moe's and kolibri1's); int8 / int8k (Gemma 4's:\n"
+@@ -1091,7 +1091,10 @@ void usage() {
+                  "                         different answers; qwen35moe's, kolibri1's and Flint's); int8 / int8k (Gemma 4's:\n"
                   "                         the same Q8_0 rule with the codes and their deltas in two arrays, so a\n"
                   "                         reader takes four codes to a load; int8k keeps the keys' side\n"
 -                 "                         quantized and the values' in fp16)\n"
@@ -3692,10 +3706,10 @@ index f2178306..83d9f150 100644
 +                 "                         values on the Walsh-Hadamard rotation with 2- or 3-bit codes - a 32-value\n"
 +                 "                         block is 10 or 14 bytes: 160 or 224 B a kolibri1 row against q8_0's 544;\n"
 +                 "                         the attention output is rotated back before the O-projection)\n"
-                  "  --expert-swaps N       while an answer is written, up to N experts it keeps using are on their way\n"
-                  "                         into VRAM, in place of cached ones it uses less (default 64, 0 = the cache\n"
-                  "                         stays as it was loaded)\n"
-@@ -1190,8 +1193,11 @@ int main(int argc, char** argv) {
+ #if defined(STRATA_GPU_METAL)
+                  "                         Metal default: q8_0 for a compatible Qwen35MoE geometry, else fp16\n"
+ #endif
+@@ -1219,8 +1222,11 @@ int main(int argc, char** argv) {
              else if (fmt == "q8_0") o.kv_format = KvFmt::kQ8_0;
              else if (fmt == "int8") o.kv_format = KvFmt::kInt8;
              else if (fmt == "int8k") o.kv_format = KvFmt::kInt8K;
@@ -4106,7 +4120,7 @@ index 17428925..e41ade38 100644
                                                            host_w, staged ? &m.stage : nullptr);
                          else
 diff --git a/src/program/generate.cpp b/src/program/generate.cpp
-index aae51631..afe1dffe 100644
+index e23229e5..561c58da 100644
 --- a/src/program/generate.cpp
 +++ b/src/program/generate.cpp
 @@ -57,6 +57,8 @@
