@@ -26,7 +26,7 @@ bash /pfad/zu/strata_patch/apply_patch.sh check strata ~/Strata
 `check` meldet `KP: konfliktfrei auf diesem Stand.` → einspielen.
 
 Fehler mit Konfliktzeilen → der Baum steht nicht auf der Basis des Patches
-(strata: main `54828c7e`, polystrata: main `a82999fd`), oder ein alter Patch
+(strata: main `146df3c4`, polystrata: main `4de79331`), oder ein alter Patch
 liegt uncommittet darauf. Dann: `git stash` → `./update.sh` → erneut testen.
 **Nie `git stash pop` nach dem update** — der alte Patch kollidiert mit dem
 neuen, der ihn ersetzt.
