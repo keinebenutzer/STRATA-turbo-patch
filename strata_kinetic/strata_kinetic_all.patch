@@ -1,0 +1,661 @@
+diff --git a/cmake/backends/cpu.cmake b/cmake/backends/cpu.cmake
+index 651e4da3..a7a5b685 100644
+--- a/cmake/backends/cpu.cmake
++++ b/cmake/backends/cpu.cmake
+@@ -18,7 +18,7 @@ macro(strata_cpu_kernels)
+ #     features, and the fallback exists for tests, exactly as P2.S3 specifies.
+ # Plan v0.3 P6: speculation components that need no GPU.
+ add_library(strata_spec STATIC src/spec/suffix_drafter.cpp src/spec/controller.cpp src/spec/draft_policy.cpp
+-            src/spec/draft_source.cpp)
++            src/spec/draft_source.cpp src/spec/suffix_index.cpp)
+ target_include_directories(strata_spec PUBLIC include)
+ if(STRATA_BUILD_TESTS)
+   add_executable(arch_defaults_test src/core/arch_defaults_test.cpp src/core/arch_defaults.cpp)
+@@ -54,6 +54,9 @@ if(STRATA_BUILD_TESTS)
+   add_executable(suffix_drafter_test src/spec/suffix_drafter_test.cpp)
+   target_link_libraries(suffix_drafter_test PRIVATE strata_spec)
+   add_test(NAME suffix_drafter_test COMMAND suffix_drafter_test)
++  add_executable(suffix_index_test src/spec/suffix_index_test.cpp)   # the session automaton drafter (kinetic port)
++  target_link_libraries(suffix_index_test PRIVATE strata_spec)
++  add_test(NAME suffix_index_test COMMAND suffix_index_test)
+   add_executable(controller_test src/spec/controller_test.cpp)
+   target_link_libraries(controller_test PRIVATE strata_spec)
+   add_test(NAME controller_test COMMAND controller_test)
+diff --git a/include/strata/spec/draft_source.hpp b/include/strata/spec/draft_source.hpp
+index 109d3c74..2cd2b2e6 100644
+--- a/include/strata/spec/draft_source.hpp
++++ b/include/strata/spec/draft_source.hpp
+@@ -10,6 +10,7 @@
+ #pragma once
+ 
+ #include "strata/spec/suffix_drafter.hpp"
++#include "strata/spec/suffix_index.hpp"
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -51,9 +52,50 @@ private:
+     SuffixDrafter& d_;
+ };
+ 
++/// The whole session (all requests since the engine started), indexed by the suffix automaton: a proposal may
++/// continue text an earlier request wrote, and matches longer than the trigram drafter's 64-token cap.
++class SessionLookupSource final : public DraftSource {
++public:
++    explicit SessionLookupSource(SuffixIndex& idx) : idx_(idx) {}
++    const char* name() const override { return "session-automaton"; }
++    /// The session keeps what it learned; a new request only extends it.
++    void reset() override {}
++    /// Kinetic's lag (speculative/mod.rs): the newest committed token is pushed onto the context before the
++    /// drafter proposes and only observed once the next token is known - the automaton holds everything
++    /// except the token whose continuation we predict. We hold that one token back until the next append.
++    void append(const int32_t* tokens, size_t n) override {
++        if (n == 0) return;
++        if (have_held_) idx_.append(&held_, 1);
++        held_ = tokens[n - 1];
++        have_held_ = true;
++        idx_.append(tokens, n - 1);
++    }
++    int propose(const int32_t* tail, int n_tail, int n_pending, int max_k, int32_t* out, int* match) override {
++        if (!have_held_) return 0;
++        n_pending = n_pending < n_tail ? n_pending : n_tail;
++        int32_t query[64];
++        query[0] = held_;
++        for (int i = 0; i < n_pending; ++i) query[1 + i] = tail[n_tail - n_pending + i];
++        const int k = idx_.draft(query, n_pending + 1, max_k, out);
++        *match = k > 0 ? idx_.last_match() : 0;
++        return k;
++    }
++
++private:
++    SuffixIndex& idx_;
++    int32_t held_ = 0;
++    bool have_held_ = false;
++};
++
+ /// Sources besides the request's own text, asked after it (empty unless something registered one at startup).
+ std::vector<std::unique_ptr<DraftSource>>& extra_draft_sources();
+ 
++/// STRATA_LOOKUP_SESSION=1: register the built-in session automaton (Kinetic's cross-request lookup, see
++/// strata/spec/suffix_index.hpp). Call once at engine start; without the variable it registers nothing, and a
++/// second call is a no-op. The index lives for the process and keeps what it learned across requests - unlike
++/// the request's own drafter, which reset() clears.
++void ensure_session_lookup_source();
++
+ /// Ask `own` and then every extra source; the proposal with the longest match of at least `min_match` wins
+ /// (ties keep the earlier source). Returns its length (0 = none); `*match` and `*source` (index: 0 = own) describe it.
+ int propose_from_sources(DraftSource& own, const int32_t* tail, int n_tail, int n_pending, int max_k, int min_match,
+diff --git a/include/strata/spec/suffix_index.hpp b/include/strata/spec/suffix_index.hpp
+new file mode 100644
+index 00000000..35520b72
+--- /dev/null
++++ b/include/strata/spec/suffix_index.hpp
+@@ -0,0 +1,82 @@
++// include/strata/spec/suffix_index.hpp - the session-wide suffix automaton drafter (no weights, no GPU).
++//
++// Ported from Kinetic (github.com/Veloresearch/kinetic, crates/kinetic-models/src/speculative/session.rs,
++// Apache-2.0), the engine whose "Zero Wait" answers while the user is still typing. Same job as SuffixDrafter -
++// propose the tokens that followed an earlier occurrence of the context's current suffix - but indexed by a
++// suffix automaton over the whole history instead of a trigram table:
++//
++//   * the LONGEST earlier occurrence of ANY suffix is found in amortized O(1) per appended token (the trigram
++//     index can only start from a 3-token key and extends backwards, capped at max_match; long repeats of
++//     edited or quoted code match exactly here);
++//   * every state keeps its two latest end positions, so a proposal continues from the latest occurrence that
++//     is not the context itself (periodic text included);
++//   * memory is bounded: past `capacity` tokens the index forgets the older half and rebuilds (~100 bytes per
++//     held token), so a session that runs for hours cannot grow it.
++//
++// Matches shorter than `min_match` (counting the token about to run) propose nothing. Like every drafter, it
++// can only change the speed: the verify window decides what is kept.
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <unordered_map>
++#include <vector>
++
++namespace strata::spec {
++
++class SuffixIndex {
++public:
++    explicit SuffixIndex(size_t capacity = 1u << 18, int min_match = 3);
++
++    void reset();
++    /// Add tokens to the history. Past the capacity: forget the older half, rebuild, re-add the newer half.
++    void append(const int32_t* tokens, size_t n);
++    void append(int32_t token) { append(&token, 1); }
++
++    /// Write up to `max_k` proposed next tokens to `out`; returns how many (0 = no match of at least min_match).
++    int propose(int max_k, int32_t* out);
++    /// As propose(), for the history followed by `extra` (drafts not yet verified): the suffix being matched
++    /// runs through them, the proposal continues where their best earlier occurrence ends. The history is
++    /// unchanged; `extra` is never indexed.
++    int propose_after(const int32_t* extra, int n_extra, int max_k, int32_t* out);
++    /// Match `query` (tokens not yet in the history) against the automaton, then take the latest occurrence that
++    /// is not the context itself: writes up to `limit` continuation tokens, returns how many, sets last_match_.
++    int draft(const int32_t* query, int n_query, int limit, int32_t* out);
++
++    /// Length of the match behind the last proposal (0 if none), counting the token about to run.
++    int last_match() const { return last_match_; }
++    size_t size() const { return tokens_.size(); }
++    const std::vector<int32_t>& history() const { return tokens_; }
++
++private:
++    static constexpr uint32_t kNone = 0xFFFFFFFFu;
++    /// How far up the suffix-link chain a push refreshes the two latest end positions. Deeper states keep an
++    /// older occurrence, which is still a real one.
++    static constexpr int kRecencyDepth = 64;
++
++    struct Node {
++        uint32_t len = 0;           // longest string the state stands for
++        uint32_t link = kNone;      // state of the longest suffix that ends in more places
++        uint32_t first_out = kNone; // head of the state's edge list in out_
++        uint32_t recent = kNone;    // latest end position of the state's strings
++        uint32_t earlier = kNone;   // second latest
++    };
++
++    void push(int32_t c);
++    uint32_t split(uint32_t p, uint32_t q, int32_t c);
++    uint32_t new_node(uint32_t len, uint32_t link, uint32_t recent, uint32_t earlier);
++    void add_edge(uint32_t from, int32_t token, uint32_t to);
++    uint32_t edge(uint32_t from, int32_t token) const;
++    const Node& node(uint32_t i) const { return nodes_[i]; }
++
++    int min_match_;
++    size_t capacity_;
++    std::vector<int32_t> tokens_;
++    std::vector<Node> nodes_;
++    std::unordered_map<uint64_t, uint32_t> edges_;             // (state << 32 | token) -> target
++    std::vector<std::pair<int32_t, uint32_t>> out_;           // per-state linked edge lists
++    uint32_t last_ = 0;                                       // state of the whole history
++    int last_match_ = 0;
++};
++
++}  // namespace strata::spec
+diff --git a/src/program/generate.cpp b/src/program/generate.cpp
+index 7416f4e1..50b0b41b 100644
+--- a/src/program/generate.cpp
++++ b/src/program/generate.cpp
+@@ -14098,6 +14098,7 @@ int main(int argc, char** argv) {
+         // --pipeline-windows 2 loads the drafter with 8 rows: the serial loop's chain keeps its own length
+         else if (use_mtp && mtp.max_t() > S_mtp) mtp.set_max_drafts(S_mtp - 1);
+         strata::spec::SuffixDrafter sfx(std::max(1, o.suffix_draft), 64, (size_t) o.max_context + 4096);
++        strata::spec::ensure_session_lookup_source();   // STRATA_LOOKUP_SESSION=1: cross-request automaton drafts (kinetic)
+         strata::spec::DraftPolicy policy(S);   // MTP or lookup window, learned over the whole process
+         strata::spec::DraftPolicy policy_idle(S);   // --draft auto: the other drafter's learned costs; swapped in with it when a request uses the other drafter
+         bool policy_is_df2 = use_df2;   // which drafter's costs `policy` holds (the engine's first drafter; swapped with policy_idle when a request uses the other one)
+@@ -20827,6 +20828,7 @@ int main(int argc, char** argv) {
+         int64_t rounds = 0, drafts_total = 0, drafts_ok = 0, corrupt_counter = 0;
+         if (use_mtp && S_mtp < o.spec) mtp.set_max_drafts(S_mtp - 1);
+         strata::spec::SuffixDrafter sfx(std::max(1, o.suffix_draft), 64, (size_t) o.max_context + 4096);
++        strata::spec::ensure_session_lookup_source();   // STRATA_LOOKUP_SESSION=1: cross-request automaton drafts (kinetic)
+         strata::spec::DraftPolicy policy(o.spec);   // MTP or lookup window (see draft_policy.hpp)
+         auto source_policy = policy;   // this generation's: committed outcomes only (observe_committed)
+         strata::spec::DraftPolicy::ChainState chain_st;
+diff --git a/src/spec/draft_source.cpp b/src/spec/draft_source.cpp
+index 2fcbc406..0e378ba2 100644
+--- a/src/spec/draft_source.cpp
++++ b/src/spec/draft_source.cpp
+@@ -1,6 +1,7 @@
+ // src/spec/draft_source.cpp - see include/strata/spec/draft_source.hpp.
+ #include "strata/spec/draft_source.hpp"
+ 
++#include <cstdlib>
+ #include <vector>
+ 
+ namespace strata::spec {
+@@ -10,6 +11,19 @@ std::vector<std::unique_ptr<DraftSource>>& extra_draft_sources() {
+     return sources;
+ }
+ 
++void ensure_session_lookup_source() {
++    static const bool on = [] {
++        const char* v = std::getenv("STRATA_LOOKUP_SESSION");
++        return v != nullptr && v[0] == '1';
++    }();
++    static bool registered = false;
++    if (!on || registered) return;
++    registered = true;
++    // 256k tokens of session history (~25 MB of automaton), matches of at least 3 tokens - the Kinetic defaults
++    static SuffixIndex session(1u << 18, 3);
++    extra_draft_sources().push_back(std::make_unique<SessionLookupSource>(session));
++}
++
+ int propose_from_sources(DraftSource& own, const int32_t* tail, int n_tail, int n_pending, int max_k, int min_match,
+                          int32_t* out, int* match, int* source) {
+     *match = 0;
+diff --git a/src/spec/suffix_index.cpp b/src/spec/suffix_index.cpp
+new file mode 100644
+index 00000000..e5bf2c4b
+--- /dev/null
++++ b/src/spec/suffix_index.cpp
+@@ -0,0 +1,161 @@
++// src/spec/suffix_index.cpp - see include/strata/spec/suffix_index.hpp.
++//
++// The automaton is the classic suffix automaton (endpos classes, suffix links); the two latest end positions per
++// state are refreshed along the suffix-link chain of every pushed token, up to kRecencyDepth states. A proposal
++// runs matching statistics: the longest suffix of (history + extra) that is a substring of the history, then the
++// continuation after its latest occurrence that is not the context itself.
++#include "strata/spec/suffix_index.hpp"
++
++#include <algorithm>
++
++namespace strata::spec {
++
++namespace {
++uint64_t edge_key(uint32_t from, int32_t token) {
++    return ((uint64_t) from << 32) | (uint32_t) token;
++}
++}  // namespace
++
++SuffixIndex::SuffixIndex(size_t capacity, int min_match)
++    : min_match_(std::max(1, min_match)), capacity_(std::max<size_t>(2, capacity)) {
++    nodes_.reserve(capacity_ * 2);
++    edges_.reserve(capacity_ * 3);
++    out_.reserve(capacity_ * 3);
++    tokens_.reserve(capacity_);
++    nodes_.push_back(Node{});   // the root: state 0
++}
++
++void SuffixIndex::reset() {
++    tokens_.clear();
++    nodes_.clear();
++    edges_.clear();
++    out_.clear();
++    nodes_.push_back(Node{});
++    last_ = 0;
++    last_match_ = 0;
++}
++
++uint32_t SuffixIndex::new_node(uint32_t len, uint32_t link, uint32_t recent, uint32_t earlier) {
++    nodes_.push_back(Node{len, link, kNone, recent, earlier});
++    return (uint32_t) nodes_.size() - 1;
++}
++
++uint32_t SuffixIndex::edge(uint32_t from, int32_t token) const {
++    const auto it = edges_.find(edge_key(from, token));
++    return it == edges_.end() ? kNone : it->second;
++}
++
++void SuffixIndex::add_edge(uint32_t from, int32_t token, uint32_t to) {
++    edges_[edge_key(from, token)] = to;
++    const uint32_t prev_head = nodes_[from].first_out;   // read before the entry is appended (it may reallocate)
++    nodes_[from].first_out = (uint32_t) out_.size();
++    out_.push_back({token, prev_head});
++}
++
++void SuffixIndex::push(int32_t c) {
++    const uint32_t end = (uint32_t) tokens_.size();
++    tokens_.push_back(c);
++    const uint32_t cur = new_node(node(last_).len + 1, kNone, end, kNone);
++    uint32_t p = last_;
++    while (p != kNone && edge(p, c) == kNone) {
++        add_edge(p, c, cur);
++        p = node(p).link;
++    }
++    uint32_t link;
++    if (p == kNone) {
++        link = 0;
++    } else {
++        const uint32_t q = edge(p, c);
++        if (node(p).len + 1 == node(q).len) {
++            link = q;
++        } else {
++            link = split(p, q, c);
++        }
++    }
++    nodes_[cur].link = link;
++    last_ = cur;
++
++    uint32_t s = link;
++    for (int i = 0; i < kRecencyDepth; ++i) {
++        if (s == 0) break;
++        nodes_[s].earlier = nodes_[s].recent;
++        nodes_[s].recent = end;
++        s = node(s).link;
++    }
++}
++
++uint32_t SuffixIndex::split(uint32_t p, uint32_t q, int32_t c) {
++    const uint32_t link = node(q).link, recent = node(q).recent, earlier = node(q).earlier;
++    const uint32_t clone = new_node(node(p).len + 1, link, recent, earlier);
++    for (uint32_t e = node(q).first_out; e != kNone; e = out_[e].second)
++        add_edge(clone, out_[e].first, edges_.at(edge_key(q, out_[e].first)));
++    while (p != kNone && edge(p, c) == q) {
++        edges_[edge_key(p, c)] = clone;
++        p = node(p).link;
++    }
++    nodes_[q].link = clone;
++    return clone;
++}
++
++void SuffixIndex::append(const int32_t* tokens, size_t n) {
++    for (size_t i = 0; i < n; ++i) {
++        if (tokens_.size() == capacity_) {   // forget the older half, rebuild with the newer half
++            std::vector<int32_t> keep(tokens_.begin() + (long) (capacity_ / 2), tokens_.end());
++            reset();
++            for (int32_t t : keep) push(t);
++        }
++        push(tokens[i]);
++    }
++}
++
++int SuffixIndex::draft(const int32_t* query, int n_query, int limit, int32_t* out) {
++    last_match_ = 0;
++    const size_t n = tokens_.size();
++    if (n == 0 || limit <= 0) return 0;
++
++    // Matching statistics over `query`, starting from the whole history (which matches itself): the longest
++    // suffix of (history + query) that is a substring of the history. Descending suffix links is Kinetic's
++    // walk from `last` looking for the transition on the token about to run - the same states, the same match.
++    uint32_t v = last_;
++    size_t l = node(last_).len;
++    for (int i = 0; i < n_query && l > 0; ++i) {
++        const int32_t c = query[i];
++        uint32_t to = edge(v, c);
++        if (to != kNone) { v = to; ++l; continue; }
++        while (v != kNone && (to = edge(v, c)) == kNone) v = node(v).link;
++        if (v == kNone) { v = 0; l = 0; continue; }   // the token is not in the language at all
++        l = node(v).len + 1;
++        v = to;
++    }
++    if ((int) l < min_match_) return 0;
++
++    // The continuation after the latest occurrence that is not the context itself (recent may be the history's
++    // own end; earlier is the second latest, and an older occurrence is still a real one). The read-back stops
++    // at the history's end - what follows there is the context, not a remembered continuation.
++    const Node& found = node(v);
++    const uint32_t ends[2] = {found.recent, found.earlier};
++    for (const uint32_t end : ends) {
++        if (end == kNone) continue;
++        const size_t start = (size_t) end + 1;
++        if (start >= n) continue;
++        last_match_ = (int) l;
++        int k = 0;
++        const size_t stop = std::min(start + (size_t) limit, n);
++        for (size_t q = start; q < stop; ++q) out[k++] = tokens_[q];
++        return k;
++    }
++    return 0;
++}
++
++int SuffixIndex::propose(int max_k, int32_t* out) {
++    if (tokens_.empty()) return 0;
++    const int32_t next = tokens_.back();   // the token about to run is part of the matched suffix
++    return draft(&next, 1, max_k, out);
++}
++
++int SuffixIndex::propose_after(const int32_t* extra, int n_extra, int max_k, int32_t* out) {
++    if (n_extra <= 0) return propose(max_k, out);
++    return draft(extra, n_extra, max_k, out);   // the extra tokens extend the matched suffix; they are never indexed
++}
++
++}  // namespace strata::spec
+diff --git a/src/spec/suffix_index_test.cpp b/src/spec/suffix_index_test.cpp
+new file mode 100644
+index 00000000..1428997d
+--- /dev/null
++++ b/src/spec/suffix_index_test.cpp
+@@ -0,0 +1,262 @@
++// src/spec/suffix_index_test.cpp - the session automaton drafter (kinetic port): unit tests and a simulation.
++//
++//   suffix_index_test                        unit tests
++//   suffix_index_test --simulate [--k K] FILE.ids ...
++//
++// The simulation mirrors suffix_drafter_test's: replay text as if a model had produced it, draft up to K tokens,
++// accept the matching prefix, commit it plus one bonus token. It measures what the automaton drafter can do on
++// the same text the trigram drafter was measured on - longer repeats should pay more here.
++#include "strata/spec/suffix_index.hpp"
++#include "strata/spec/draft_source.hpp"
++
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <vector>
++
++using strata::spec::SuffixIndex;
++using strata::spec::SuffixDrafter;
++
++namespace {
++int g_fail = 0;
++void check(bool ok, const char* what) {
++    if (!ok) { std::fprintf(stderr, "FAIL: %s\n", what); ++g_fail; }
++}
++
++std::vector<int32_t> read_ids(const char* path) {
++    std::ifstream f(path);
++    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
++    for (char& c : text) if (c == ',') c = ' ';
++    std::istringstream in(text);
++    std::vector<int32_t> ids;
++    for (int32_t v; in >> v;) ids.push_back(v);
++    return ids;
++}
++
++// Brute force (ported from Kinetic's reference test): the longest suffix of (history + [next]) that occurs in
++// history, then the continuation after its latest occurrence that still has a token to read.
++std::vector<int32_t> expected(const std::vector<int32_t>& history, int32_t next, int limit, int min_match) {
++    std::vector<int32_t> text = history;
++    text.push_back(next);
++    const size_t n = history.size();
++    for (size_t len = text.size(); len >= 1; --len) {
++        std::vector<size_t> starts;                       // latest first
++        for (size_t i = n >= len ? n - len + 1 : 0; i-- > 0;)
++            if (std::equal(text.end() - (long) len, text.end(), history.begin() + (long) i))
++                starts.push_back(i + len);
++        if (starts.empty()) continue;
++        if ((int) len < min_match) return {};
++        for (size_t start : starts)
++            if (start < n) return std::vector<int32_t>(history.begin() + (long) start,
++                                                       history.begin() + (long) std::min(start + (size_t) limit, n));
++        return {};
++    }
++    return {};
++}
++
++void unit_tests() {
++    // 1. Kinetic's reference test 'continues_the_longest_and_latest_match': drafts extend the matched suffix
++    {
++        SuffixIndex d(1u << 12, 2);
++        const int32_t h[] = {1, 2, 3, 4, 9, 9, 2, 3, 5, 7, 1, 2};
++        d.append(h, 12);
++        const int32_t pending[] = {3};
++        int32_t out[8] = {};
++        const int k = d.propose_after(pending, 1, 3, out);
++        const int32_t want[] = {4, 9, 9};
++        check(k == 3 && std::equal(out, out + 3, want), "kinetic: draft(3) == [4,9,9]");
++        check(d.last_match() == 3, "kinetic: match counts the running token");
++        const int32_t more[] = {3, 8, 8, 2};
++        d.append(more, 4);
++        const int k2 = d.propose_after(pending, 1, 2, out);
++        const int32_t want2[] = {8, 8};
++        check(k2 == 2 && std::equal(out, out + 2, want2), "kinetic: draft(3) == [8,8] after extend");
++    }
++    // 2. min_match gate: a 2-token match proposes nothing when 3 are required; unknown tokens never match
++    {
++        SuffixIndex d(1u << 12, 3);
++        const int32_t h[] = {7, 8, 7, 8};
++        d.append(h, 4);
++        int32_t out[8] = {};
++        check(d.propose(4, out) == 0, "gate: 2-token match under min_match 3");
++        const int32_t pending[] = {9};   // 9 is not in the language at all
++        check(d.propose_after(pending, 1, 4, out) == 0, "gate: unknown token");
++    }
++    // 3. periodic text through the session source (kinetic's lag: the automaton holds everything except the
++    //    token about to run): after [1,2,3]x3 the suffix "1 2 3 1 2" occurred at 0-4 and 3-7, and 3 followed
++    //    it at 0-5 - the proposal continues after 3-7 with [1,2]
++    {
++        SuffixIndex sa(1u << 12, 2);
++        strata::spec::SessionLookupSource s(sa);
++        const int32_t h[] = {1, 2, 3, 1, 2, 3, 1, 2, 3};
++        s.append(h, 9);
++        int32_t out[8] = {};
++        int match = 0;
++        const int k = s.propose(h, 9, 0, 4, out, &match);
++        const int32_t want[] = {1, 2};
++        check(k == 2 && std::equal(out, out + 2, want), "periodic: continues after '1 2 3 1 2 3'");
++        check(match == 6, "periodic: match length");
++        // [1,2,3,4]x2+[1]: "1 2 3 4 1" occurred at 0-4, continuation [2,3,4]
++        SuffixIndex sb(1u << 12, 2);
++        strata::spec::SessionLookupSource s2(sb);
++        const int32_t h2[] = {1, 2, 3, 4, 1, 2, 3, 4, 1};
++        s2.append(h2, 9);
++        const int k2 = s2.propose(h2, 9, 0, 4, out, &match);
++        const int32_t want2[] = {2, 3, 4};
++        check(k2 == 3 && std::equal(out, out + 3, want2), "periodic: continues after '1 2 3 4 1'");
++        check(match == 5, "periodic: match length 5");
++    }
++    // 4. Kinetic's reference test 'forgets_the_older_half_when_full'
++    {
++        SuffixIndex d(8, 2);
++        const int32_t h[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
++        d.append(h, 9);
++        check(d.size() == 5, "capacity: older half forgotten (len 5)");
++        const int32_t two[] = {2};
++        int32_t out[8] = {};
++        check(d.propose_after(two, 1, 2, out) == 0, "capacity: forgotten token no longer matches");
++        d.append(5);
++        const int32_t six[] = {6};
++        const int k = d.propose_after(six, 1, 2, out);
++        const int32_t want[] = {7, 8};
++        check(k == 2 && std::equal(out, out + 2, want), "capacity: kept half still drafts");
++    }
++    // 5. brute-force parity on random short-alphabet text (Kinetic's 'drafts_like_brute_force')
++    {
++        for (int alphabet : {2, 3, 5}) {
++            SuffixIndex d(1u << 12, 2);
++            std::vector<int32_t> history;
++            unsigned seed = 12345u + (unsigned) alphabet;
++            auto rnd = [&seed](int m) { seed = seed * 1103515245u + 12345u; return (int) ((seed >> 16) % (unsigned) m); };
++            for (int step = 0; step < 400; ++step) {
++                const int32_t t = (int32_t) rnd(alphabet);
++                d.append(t);
++                history.push_back(t);
++                const int32_t next = (int32_t) rnd(alphabet);
++                int32_t out[6] = {};
++                const int k = d.propose_after(&next, 1, 6, out);
++                const std::vector<int32_t> want = expected(history, next, 6, 2);
++                check(k == (int) want.size() && std::equal(out, out + k, want.begin()), "parity: draft == brute force");
++                if (g_fail) return;
++            }
++        }
++    }
++    // 6. brute-force parity for the production path through the session source (lag: the automaton holds
++    //    everything except the token about to run, exactly like Kinetic's Decoder)
++    {
++        SuffixIndex d(1u << 12, 2);
++        strata::spec::SessionLookupSource s(d);
++        std::vector<int32_t> history;
++        unsigned seed = 999u;
++        auto rnd = [&seed](int m) { seed = seed * 1103515245u + 12345u; return (int) ((seed >> 16) % (unsigned) m); };
++        for (int step = 0; step < 400; ++step) {
++            const int32_t t = (int32_t) rnd(4);
++            s.append(&t, 1);
++            history.push_back(t);
++            int32_t out[6] = {};
++            int match = 0;
++            const int k = s.propose(history.data(), (int) history.size(), 0, 6, out, &match);
++            const std::vector<int32_t> auto_hist(history.begin(), history.end() - 1);
++            const std::vector<int32_t> want = expected(auto_hist, history.back(), 6, 2);
++            check(k == (int) want.size() && std::equal(out, out + k, want.begin()), "parity: session propose == brute force");
++            if (g_fail) return;
++        }
++    }
++    // 7. the DraftSource wiring: the session source keeps learning across requests and wins on the longer match
++    {
++        SuffixIndex session(1u << 12, 3);
++        strata::spec::extra_draft_sources().push_back(
++            std::make_unique<strata::spec::SessionLookupSource>(session));   // as ensure_session_lookup_source does
++        auto& src = *static_cast<strata::spec::SessionLookupSource*>(strata::spec::extra_draft_sources().back().get());
++        SuffixDrafter fresh(3, 64, 64);   // a fresh per-request drafter: it knows only this request's prompt
++        strata::spec::PromptLookupSource own(fresh);
++        const int32_t r1[] = {10, 11, 12, 13, 14, 15};
++        src.append(r1, 6);                       // request 1 wrote this
++        const int32_t r2[] = {10, 11, 12};
++        src.append(r2, 3);                       // request 2 quotes request 1's start
++        own.append(r2, 3);
++        // request 2's MTP drafts 13, 14 (pending): the session knows what followed (15) and continues past it
++        const int32_t tail[] = {10, 11, 12, 13, 14};
++        int32_t out[8] = {};
++        int match = 0, source = -1;
++        const int k = strata::spec::propose_from_sources(own, tail, 5, 2, 8, 3, out, &match, &source);
++        strata::spec::extra_draft_sources().clear();
++        check(k == 3 && match == 5 && source == 1, "source: session wins with the longer match");
++        const int32_t want[] = {15, 10, 11};   // automaton = committed minus the held 12: "10 11 12 13 14" at 0-4
++        check(k == 3 && std::equal(out, out + 3, want), "source: continues request 1's text");
++    }
++    // 8. speed smoke: 100k tokens appended, 1000 three-token lookups - the automaton must stay O(1) per step
++    {
++        SuffixIndex d(1u << 18, 3);
++        std::vector<int32_t> text;
++        unsigned seed = 7u;
++        auto rnd = [&seed](int m) { seed = seed * 1103515245u + 12345u; return (int) ((seed >> 16) % (unsigned) m); };
++        for (int i = 0; i < 100000; ++i) text.push_back((int32_t) rnd(100));
++        for (size_t i = 0; i + 40 <= text.size(); i += 100) text.insert(text.end(), text.begin() + (long) i, text.begin() + (long) i + 40);
++        d.append(text.data(), text.size());
++        int32_t out[8] = {};
++        int hits = 0;
++        for (int j = 0; j < 1000; ++j) hits += d.propose_after(&text[(size_t) j], 3, 8, out) > 0 ? 1 : 0;
++        check(hits > 20, "speed: repeated text proposes");
++    }
++}
++
++struct Sim { long steps = 0, tokens = 0, proposals = 0, accepted = 0; };
++
++Sim simulate(const std::vector<int32_t>& history, const std::vector<int32_t>& target, int K) {
++    SuffixIndex d(1u << 18, 3);
++    strata::spec::SessionLookupSource s(d);   // the production path, with kinetic's lag
++    s.append(history.data(), history.size());
++    Sim sm;
++    std::vector<int32_t> draft(K);
++    size_t i = 0;
++    while (i < target.size()) {
++        int match = 0;
++        const int n = s.propose(nullptr, 0, 0, K, draft.data(), &match);
++        int a = 0;
++        while (a < n && i + a < target.size() && draft[a] == target[i + a]) ++a;
++        if (n > 0) { ++sm.proposals; sm.accepted += a; }
++        const size_t commit = std::min(target.size() - i, (size_t) a + 1);
++        s.append(&target[i], commit);
++        i += commit;
++        sm.tokens += (long) commit;
++        ++sm.steps;
++    }
++    return sm;
++}
++
++}  // namespace
++
++int main(int argc, char** argv) {
++    int K = 8;
++    char** files = nullptr;
++    int n_files = 0;
++    if (argc > 1 && std::strcmp(argv[1], "--simulate") == 0) {
++        int base = 2;
++        if (argc > 3 && std::strcmp(argv[2], "--k") == 0) { K = std::atoi(argv[3]); base = 4; }
++        files = argv + base;
++        n_files = argc - base;
++    } else {
++        unit_tests();
++        return g_fail ? 1 : 0;
++    }
++    std::printf("%-28s %8s %8s %10s %10s              %8s %10s %10s\n", "file", "tokens", "tok/step", "proposed",
++                "accepted", "tok/step", "proposed", "accepted");
++    for (int f = 0; f < n_files; ++f) {
++        const std::vector<int32_t> ids = read_ids(files[f]);
++        if (ids.size() < 16) continue;
++        const size_t half = ids.size() / 2;
++        const Sim c = simulate({ids.begin(), ids.begin() + half}, {ids.begin() + half, ids.end()}, K);
++        const size_t a = ids.size() / 3, b = 2 * ids.size() / 3;
++        const Sim p = simulate(ids, {ids.begin() + a, ids.begin() + b}, K);
++        const char* name = std::strrchr(files[f], '/') ? std::strrchr(files[f], '/') + 1 : files[f];
++        std::printf("%-28s %8zu | %8.2f %10.1f%% %10.2f              | %8.2f %10.1f%% %10.2f\n", name, ids.size(),
++                    (double) c.tokens / c.steps, 100.0 * c.proposals / c.steps,
++                    c.proposals ? (double) c.accepted / c.proposals : 0.0, (double) p.tokens / p.steps,
++                    100.0 * p.proposals / p.steps, p.proposals ? (double) p.accepted / p.proposals : 0.0);
++    }
++    return 0;
++}
