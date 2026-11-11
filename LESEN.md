@@ -15,12 +15,33 @@ bash ../strata_patch/apply_patch.sh revert  strata  # 3) zurücknehmen
 Strata-Ordner liegt — sonst entsprechend anpassen.)
 
 Syntax immer: **zuerst der Modus** (`check` / `apply` / `revert`), **dann die
-Basis** (`strata`, `polystrata` oder `split4`), **dann optional das
+Basis** (`strata`, `polystrata`, `split4`, `kinetic` oder `multinode`), **dann optional das
 Zielverzeichnis**.
+Kein `-C` wie bei git. Von jedem beliebigen Ordner aus funktioniert auch:
 
 ```bash
 bash /pfad/zu/strata_patch/apply_patch.sh check strata ~/Machen/Strata
 ```
+
+## Kurz: was die Patches bringen
+
+- **strata** (turbo2/turbo3/k3v8): KV in 10/14 Byte pro 32 Werte statt 16 — derselbe
+  Speicherplatz fasst mehr Kontext, und die Decode-Kerne arbeiten direkt auf dem gepackten
+  KV (kein Umschichten mehr pro Fenster).
+- **split4**: Layer-Split über alle vier Karten einer Maschine (2gb läuft damit produktiv,
+  gemessen 106–116 t/s statt 80–83 im Layer-Split).
+- **kinetic**: Session-Lookup-Drafter — dort, wo schon geschriebener Text wiederkehrt,
+  +7,4 % warm (53,12 gegen 49,45 t/s auf 8gb); auf neuem Text kein Gewinn.
+- **multinode**: ein Layer-Split-Stadium auf einem **zweiten PC**. Was es bringt: Der
+  VRAM-Bedarf des Modells verteilt sich über zwei Rechner — die Head-Karte hält nur noch
+  ihre eigenen Schichten samt Experten, die Schichten ab K1 liegen samt ihrer Experten auf
+  der Stage-Karte. Dadurch passt ein Modell, das auf einer Karte nicht (oder nur mit
+  aggressiver Quantisierung) resident wäre, mit mehr Experten im Speicher; die Link trägt
+  nur Hand-off-Blöcke pro Verify-Fenster, nicht die Gewichte. Kein Gewinn ohne zweiten PC:
+  auf EINER Karte gemessen (11.11.2026, A4000) 51–57 t/s ohne gegen 24–29 t/s mit
+  `--remote-stage local --layer-split 40,44` — die Stage nimmt der Head-Karte 4,8 GiB VRAM
+  und damit residente Experten weg. Ohne `--remote-stage` verhält sich die Engine wie ohne
+  Patch.
 
 ## 1. Testen — passt der Patch auf meinen Stand?
 

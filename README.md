@@ -186,12 +186,12 @@ wiederzuerkennen. Der Offline-Test auf den echten Token-Dateien sagt dasselbe:
 `benchy-long.ids` 8,67 gegen 8,56 tok/step, `parity_prompts.ids` **6,86 gegen 5,65** (+21 %),
 bei neuem Text beieinander (1,09 / 1,58).
 
-kinetic_switch_mode.sh kinetic|chain_only|installed|original`
+Auf 8gb liegt dafür ein Umschalter: `bash /home/pott/kinetic_switch_mode.sh kinetic|chain_only|installed|original`
 (stoppt die Engine, tauscht `engine/strata` gegen `engine/strata.kinetic` /
 `engine/strata.bak-kinetic`, stellt die Config um, startet neu). Config-Sicherung:
 `coder_local.json.bak-pre-kinetic`.
 
-**Fall beim Bauen eines zweiten Build-Ordners :** CMake findet dort weder Ninja noch nvcc
+**Fall beim Bauen eines zweiten Build-Ordners auf 8gb:** CMake findet dort weder Ninja noch nvcc
 von selbst (Ninja liegt nur in `.venv/bin`, nvcc nur unter `/usr/local/cuda-12.8/bin`). Ein
 frischer Ordner braucht deshalb explizit
 `-DCMAKE_MAKE_PROGRAM=$PWD/.venv/bin/ninja -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc`
@@ -200,4 +200,104 @@ frischer Ordner braucht deshalb explizit
 liefert also keine Test-Ziele — für `suffix_index_test` einen eigenen Ordner mit
 `-DSTRATA_BUILD_TESTS=ON` nehmen und `build/` in Ruhe lassen.
 
+## Multinode (remote_stage) — Stand 11.11.2026, gebaut auf 0.1.59.1
 
+Layer-Split über TCP auf einen zweiten PC: der Head fährt die Schichten `[0, K1)` selbst,
+jede Stage-Engine fährt `[Ki, Ki+1)`. Rahmenprotokoll Hello/Window/Commit/Reset/Ping/Quit,
+Lockstep pro Fenster. Port aus `isichan-ai/Strata-GLM` (Basis 0.1.41) auf `7726f80c`.
+
+**Was er bringt:** Der VRAM-Bedarf verteilt sich über zwei Rechner. Die Head-Karte hält nur
+noch ihre Schichten `[0, K1)` samt deren Experten; alles ab `K1` liegt samt Experten auf der
+Stage-Karte, die Link trägt pro Verify-Fenster nur Hand-off-Blöcke (Größenordnung
+`hc·n_embd + n_embd + hc` floats pro Fenster-Token), nie Gewichte. Praktisch: ein Modell, das
+auf einer 16-GB-Karte nur mit RAM-Nachschub oder aggressiver Quantisierung läuft, bekommt
+einen zweiten 16-GB-Raum für seine Experten — mehr residente Experten, weniger PCIe-Swaps.
+Die vier Flags stehen jetzt auch in `--help`. Ohne `--remote-stage` ist der Patch inert.
+**Gemessen (11.11.2026, RTX A4000, eine Karte, Pack `iq3_xxs`, 8192 Kontext, `--kv q4_0`,
+fester Prompt, 128 Tokens):** ohne Split 51–57 t/s, mit `--remote-stage local
+--layer-split 40,44` 24–29 t/s, mit echtem TCP-Head gegen eine Stage-Engine auf derselben
+Karte 21–24 t/s. Der Link selbst ist billig: 125 Fenster zu 1,81 ms (Senden 1,0 ms, Warten
+0,9 ms), 22,9 MB hinaus / 22,8 MB hinein, 125 Commits. Der Preis auf EINER Karte ist der
+VRAM, den die Stage wegnimmt: dem Head fielen die residenten Experten von 6317 Plätzen
+(10,14 GiB) auf 3472 (5,62 GiB), also mehr Nachschub über PCIe. Auf einem zweiten Rechner
+kommt dieser Abzug nicht von der Head-Karte — dort liegt der Nutzen.
+
+**Zwei Korrekturen aus dem Live-Lauf (in der Spitze `ceb942ee`):** (1) `--remote-stage local`
+fährt die Stage in derselben Engine, also dürfen ihre Dense-Projektionen und ihre Profilpaare
+nicht abgeschnitten werden (sonst `verify: blk.40.attn_qkv.weight is not served natively`).
+(2) Die PCIe-Share-Loop holte `GpuStage& stages[st-1]`, obwohl hinter einem Remote-Stage gar
+keine GpuStage angelegt wird — SIGSEGV direkt nach der Zeile `PCIe share`; jetzt wird die
+Stufe übersprungen.
+
+**Starten:** die Stage-Engine läuft besser **direkt** (`strata --serve --stage-listen ...`),
+nicht über `serve/server.py`: ihr Annahme-Loop blockiert in `accept()`, deshalb meldet sie dem
+Startprogramm nie "bereit" und wird nach dessen Wartezeit abgeschossen. Der Head darf ruhig
+über `serve/server.py` laufen. Die Stage braucht offene stdin (zum Beispiel eine FIFO, die ein
+`sleep` offenhält).
+
+**Head:** `--serve --remote-stage HOST:PORT[,HOST:PORT..] --layer-split K1,K2[,K3..]`
+(K1 = erste Schicht der ersten Stage; `--remote-stage local` fährt die mittlere Stage in
+derselben Engine auf CUDA0 — Einzrechner-A/B). Der Head liest Prompts über die Verify-Fenster
+(kein Prompt-Cache, keine adaptiven Swaps; `STRATA_MN_ADAPT=1` hält die adaptiven Schichten
+über den eigenen Schichten an). `STRATA_MN_GAP_MS` ist ein Testknopf für eine Pause pro Fenster.
+
+**Stage-PC:** `--serve --stage-listen PORT --stage-layers K1,K2 [--stage-allow IP]`
+(allow-Default ist `127.0.0.1` — für einen echten zweiten PC auf dessen Adresse setzen).
+Die Stage lädt nur ihre Schichtgewichte (index.txt-Durchsuche + NativeDense-Skipbereiche),
+schnitzt nur ihren Session-Bereich, überspringt PLE und native Head und verlangt, dass jeder
+Experte ihrer Schichten in VRAM steht (sonst Abbruch mit Meldung, wie viele fehlen).
+
+Geteilte Dateien mit `strata_all`: `cmake/strata_gpu_engine.cmake`, `src/core/verify.cpp`,
+`src/program/generate.cpp` — trotzdem **konfliktfrei stapelbar** (plain `git apply`, kein
+`--3way`, auf frischem Arbeitsbaum `7726f80c` geprüft: erst `strata_all` (25 Dateien), dann
+`multinode` (→ 30 Dateien); ebenso gegen `split4` und gegen `kinetic`).
+
+Grenzfall: Bildzeilen (`embd_rows`) erzwingen den batched Lese-Pfad, der am Remote-Head nicht
+funktioniert — Multinode mit Bildeingaben ist noch nicht getragen (im Fork ebenso). Der Head
+behält KV, Cache und Head-Köpfe; die Stage hält nur ihre Schichten samt Experten-VRAM.
+
+Quelle: `pott/strata_lokal`, Ast `agent/hermes-multinode-01591` (Spitze `ceb942ee`, Basis
+`7726f80c`).
+
+## Backlog aus der Fork-Sichtung (11.11.2026, Kopien unter `/work/hermes/home/fork_check`)
+
+Aus `sergqwer/strata-nvfp4` (Basis 0.2.13) bleiben als weitere Patch-Kandidaten —
+Reihenfolge nach Nutzen, jeder stapelbar auf `7726f80c`:
+
+1. `STRATA_SPLIT_SLOW_RESIDENT` + `STRATA_SPLIT_PF_CHUNKS` — ein langsames Split-Stadium
+   hält alle Experten seiner Schichten und die eigenen Prompt-Puffer, die Link trägt nur
+   Hand-offs; Prefill in überlappenden Chunks, Stadien arbeiten parallel an verschiedenen
+   Chunks. Passt direkt zum Multinode-Patch (derselbe Engpass: die Link-Leitung).
+2. `rope_dynamic` (331 Z.) — dynamisches YaRN: `--rope-scaling dynamic`, `rope_rerotate_state`
+   dreht im Cache liegende K nach, Rope-Tabelle wird an Ort und Stelle neu gebaut. Relevant für lange
+   Sessions auf 2gb.
+3. `conversation_disk` (907 Z.) + `conversation_pressure` (85 Z.) — Disk-Tier für geparkte
+   Konversationen (TTL, Byte-Budget, Hash-Index) und RAM-Druck-Eviction mit `malloc_trim`;
+   Upstream kennt nur den RAM-Cache.
+4. `blob_straddle` (68 Z.) — seitengesperrte Rand-Blobs bekommen pro Ort eine gepinnte Kopie,
+   damit Refills nicht mit `cudaErrorInvalidValue` sterben.
+5. `mmq_nvfp4_a44` + `mmq_vendor` — nur für Blackwell-/ältere-Karten-Agenda (sm_120a),
+   für A4000 nicht anwendbar.
+
+Nicht als Patch geeignet: `hongfaqiu/strata-manager` (Management-Frontend, kein Engine-Code)
+und `RustingStrata` (eigener Pure-Rust-Engine-Neubau, kein Port).
+
+## Quellwahrheit (fürs Neu-Schneiden)
+
+- Gitea `pott/strata_lokal`: **aktuell `agent/hermes-k3v8-01591` (Spitze `847040c4`, Basis
+  `7726f80c` = 0.1.59.1)** — daraus ist `strata/strata_all.patch` geschnitten. Der vorige
+  Schnitt `agent/hermes-k3v8` (Spitze `0328318b`, Basis `146df3c4`) bleibt als Geschichte
+  stehen. main bleibt reiner Upstream. Die Komponenten-Äste
+  `agent/hermes-warn-turbo` und `agent/hermes-clean` stehen noch auf der alten
+  Basis `54828c7e` (Geschichte; für einen neuen Schnitt zählt der combined-Ast).
+  Der alte Schnitt ist als Tag `archive/k3v8-on-54828c7e` (Spitze `200fe214`)
+  gesichert. Für den Split-Patch: derselbe Repo, Ast `agent/hermes-multigpu`
+  (Spitze `6fd5a3c5`, Basis `7726f80c`). Für den Kinetic-Patch: derselbe Repo, Ast
+  `agent/hermes-kinetic` (Spitze `403d1267`, Basis `dbb2d168`). Für den Multinode-Patch:
+  derselbe Repo, Ast `agent/hermes-multinode-01591` (Spitze `ceb942ee`, Basis `7726f80c`).
+- Gitea `pott/polystrata_lokal`: `agent/hermes-turbo-poly` (Spitze `2fc9bab9`,
+  Basis `4de79331`); `agent/hermes-clean-poly` steht noch auf `a82999fd`.
+  Alter Schnitt: Tag `archive/turbo-poly-on-a82999fd` (Spitze `1c24b8d4`).
+- Austauschordner mit Einzelkomponenten, Beweisen und Messskripten:
+  `/workspace/tmp/opencode/austausch/strata_warn_turbo/` und
+  `.../polystrata_turbo/`
