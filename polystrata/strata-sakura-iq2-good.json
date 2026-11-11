@@ -1,0 +1,15 @@
+{
+ "exe": "/workspace/polystrata_build/strata-poly",
+ "args": ["--model", "/workspace/Sakura-Kolibri-1-IQ2_XS.gguf", "--max-context", "65536", "--kv", "q8_0", "--expert-profile", "/work/hermes/home/strata_packs/kolibri_sakura_iq2/expert-profile.txt", "--vram-reserve-mib", "512", "--prompt-batch", "2048", "--threads", "12"],
+ "cwd": "/workspace/poly_0145p8",
+ "log": "/work/hermes/home/strata_packs/kolibri_engine_q8_local.log",
+ "model_name": "kolibri-sakura-iq2",
+ "tokenizer": "/work/hermes/home/strata_packs/kolibri_sakura_iq2/tokenizer",
+ "port": 11434,
+ "api_key": "1234",
+ "tool_call_recovery": true,
+ "reasoning_budget_tokens": 2048,
+ "reasoning_loop_recovery": "recover",
+ "repeat_stop_tokens": 32,
+ "sampling": {"temperature": 0.7, "top_p": 0.9, "top_k": 40, "min_p": 0.05, "repeat_penalty": 1.1}
+}
