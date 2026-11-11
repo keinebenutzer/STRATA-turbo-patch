@@ -18,6 +18,7 @@ sichtbar**, nicht still — der Ablauf steht unten unter „Stand 11.11.2026“.
 | `strata/strata_all.patch` | Strata main `7726f80c` (0.2.13.1 / engine **0.1.59.1**) | `847040c4` | Warnbereinigung + turbo2 + turbo3 + k3v8 + setup-Menü (alle sechs KV-Modi) + Test-Nachzug |
 | `polystrata/polystrata_all.patch` | PolyStrata main `4de79331` (0.1.45-poly.8) | `2fc9bab9` | dasselbe für das `strata`-Target **und** turbo2/turbo3 für die Kolibri-Engine `strata-poly` (`--kv turbo2\|turbo3`, Parity-Test `poly_turbo_parity`) |
 | `strata_split4/strata_split4_all.patch` | Strata main `7726f80c` (0.2.13.1 / engine **0.1.59.1**) | `6fd5a3c5` | **4 x 16 GB: die All-Cards-Split-Engine.** IQ2_XS/IQ2_XXS-Leser, IQ3_S-Wandlung, Kartenvergleich und Karten-Fit nach den eigenen Zahlen der Maschine, `EC_POOLS` 4→8 mit `CardW` 896→1024, Q2_0-Shared-Expert-Schutz. **Andere Basis als die beiden oben** — eigene `strata_split4/LESEN.md`. |
+| `strata_kinetic/strata_kinetic_all.patch` | Strata main `dbb2d168` (0.2.13.1 / engine **0.1.59.1**; passt geprüft auch auf `7726f80c` und `f33c8c30`) | `403d1267` | **Session-Lookup-Drafter (Kinetic-Port).** Suffix-Automaton über den ganzen Session-Verlauf statt nur über den Request, mit Kinetic's Lag (der neueste Token wird zurückgehalten und erst in die Anfrage genommen, bevor seine Fortsetzung gesagt wird). Wirkt in der `--lookup-chain`-Kette als zweite Quelle, eingeschaltet durch `STRATA_LOOKUP_SESSION=1`. 7 Dateien, +567/-1, eigene `strata_kinetic/LESEN.md`. |
 
 Komponenten im Einzelnen (strata): 13 Build-Warnungen auf 0 · turbo2 (2-Bit,
 320 B/Zelle) · turbo3 (3-Bit, 448 B/Zelle) · **k3v8** (asymmetrisch: rotierte
@@ -142,7 +143,7 @@ Unsere Tests laufen alle: `kv_turbo_parity` und `draft_kv_plan_test` bestanden.
 `kv_append_turbo2 launch: no kernel image is available for execution on the device` —
 gebaut war Blackwell, nicht sm_86. Explizit setzen: `-DCMAKE_CUDA_ARCHITECTURES=86`.
 
-## Split4 (4 x 16 GB) — Stand 11.11.2026, läuft produktiv auf 4 x A4000 ( 16GB ) 
+## Split4 (4 x 16 GB) — Stand 11.11.2026, läuft produktiv auf 2gb
 
 Der Split-Patch wohnt in einem **eigenen Ordner mit eigener LESEN.md**, weil er eine andere
 Basis hat (`7726f80c` = 0.1.59.1) und eine andere Engine betrifft (`src/split/`, der
@@ -156,4 +157,47 @@ Layer-Split 79,7 / 83,0 t/s → **Split 106,5 / 115,4 t/s**; GPU-Last 76/71/45/4
 
 Der 4-Karten-Pfad ist upstream unbestätigt — der Engine sagt wörtlich `sfnx: 4 cards builds and
 passes the CPU checks but has not been validated on hardware`. Die Zahlen oben sind unser Befund.
+
+## Kinetic (Session-Lookup-Drafter) — Stand 11.11.2026, gebaut und gemessen auf 8gb
+
+Der Port kommt aus Kinetic (`crates/kinetic-models/src/speculative/session.rs`, Rust) und ist
+in STRATA **abschaltbar**: ohne `STRATA_LOOKUP_SESSION=1` registriert er nichts, die Engine
+verhält sich dann wie ohne Patch (gemessen: 48,89 t/s gegen 48,90 t/s im Original).
+
+Er wirkt nur in der `--lookup-chain`-Kette (`propose_from_sources`): die eigene Request-Kette
+bleibt die erste Quelle, der Session-Automaton wird danach gefragt und der längere Treffer
+gewinnt. Deshalb gehört zum Einschalten immer beides — env-Variabel **und** `--lookup-chain`.
+
+Gemessen auf 8gb (RTX 3060 12 GB, coder-iq1_m, `--kv k8v4`, `--spec 4` + MTP, temp 0,
+Streaming-Decode ohne Prefill, Median aus vier Läufen):
+
+| Zustand | Kurzprompts (117–220 Tokens) | Wiederholung: kalt → warm |
+|---|---|---|
+| Original (0.1.59.1, keine Kette) | 32,00 / 33,64 t/s | 46,93 → 49,45 |
+| Patch drauf, **aus** | 31,48 t/s | 49,23 → 48,68 |
+| nur `--lookup-chain 6` (Upstream-Kette, ohne Automaton) | — | 45,82 → 47,33 |
+| `--lookup-chain 6` **+ Automaton** | 31,10 t/s | 45,49 → **53,12** |
+
+Der Automaton gewinnt da, wo schon geschriebener Text wiederkehrt: warm **53,12 gegen 49,45 =
++7,4 %** gegenüber dem Original und **+12,2 %** gegenüber der Kette allein. Die Kette selbst
+kostet beim Kaltstart etwa 3 % (mehr Zeilen im Verify-Fenster). Auf kurzen neuen Prompts ist
+kein Gewinn, eher ein kleiner Verlust (31,10 gegen 32,00–33,64) — dort gibt es nichts
+wiederzuerkennen. Der Offline-Test auf den echten Token-Dateien sagt dasselbe:
+`benchy-long.ids` 8,67 gegen 8,56 tok/step, `parity_prompts.ids` **6,86 gegen 5,65** (+21 %),
+bei neuem Text beieinander (1,09 / 1,58).
+
+kinetic_switch_mode.sh kinetic|chain_only|installed|original`
+(stoppt die Engine, tauscht `engine/strata` gegen `engine/strata.kinetic` /
+`engine/strata.bak-kinetic`, stellt die Config um, startet neu). Config-Sicherung:
+`coder_local.json.bak-pre-kinetic`.
+
+**Fall beim Bauen eines zweiten Build-Ordners :** CMake findet dort weder Ninja noch nvcc
+von selbst (Ninja liegt nur in `.venv/bin`, nvcc nur unter `/usr/local/cuda-12.8/bin`). Ein
+frischer Ordner braucht deshalb explizit
+`-DCMAKE_MAKE_PROGRAM=$PWD/.venv/bin/ninja -DCMAKE_CUDA_COMPILER=/usr/local/cuda-12.8/bin/nvcc`
+(dazu `-DCMAKE_CUDA_ARCHITECTURES=86`), sonst endet die Konfiguration mit
+„No CMAKE_CUDA_COMPILER could be found“. Der vorhandene `build/` hat `STRATA_BUILD_TESTS=OFF`,
+liefert also keine Test-Ziele — für `suffix_index_test` einen eigenen Ordner mit
+`-DSTRATA_BUILD_TESTS=ON` nehmen und `build/` in Ruhe lassen.
+
 

@@ -17,7 +17,6 @@ Strata-Ordner liegt — sonst entsprechend anpassen.)
 Syntax immer: **zuerst der Modus** (`check` / `apply` / `revert`), **dann die
 Basis** (`strata`, `polystrata` oder `split4`), **dann optional das
 Zielverzeichnis**.
-Kein `-C` wie bei git. Von jedem beliebigen Ordner aus funktioniert auch:
 
 ```bash
 bash /pfad/zu/strata_patch/apply_patch.sh check strata ~/Machen/Strata
