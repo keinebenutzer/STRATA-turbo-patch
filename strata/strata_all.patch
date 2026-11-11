@@ -1,8 +1,8 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 57d6b6a3..0896f508 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -544,6 +544,8 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
+diff --git a/cmake/strata_gpu_engine.cmake b/cmake/strata_gpu_engine.cmake
+index 41da8d2d..5889b8c9 100644
+--- a/cmake/strata_gpu_engine.cmake
++++ b/cmake/strata_gpu_engine.cmake
+@@ -85,6 +85,8 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
                            src/kernels/cuda/kv_q8.cu
                            src/kernels/cuda/kv_stream.cu
                            src/kernels/cuda/kv_q4.cu
@@ -11,7 +11,7 @@ index 57d6b6a3..0896f508 100644
                            src/kernels/cuda/fused_gr.cu
                            src/kernels/cuda/cvec.cu
                            src/kernels/cuda/qsa_decode_attn.cu
-@@ -1774,6 +1776,12 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
+@@ -1327,6 +1329,12 @@ if(STRATA_ENABLE_CUDA OR STRATA_ENABLE_HIP)
    target_include_directories(kv_q4_parity PRIVATE ${_strata_gpu_include_directories})
    target_link_libraries(kv_q4_parity PRIVATE strata_kernels ${_strata_gpu_runtime_target})
    add_test(NAME kv_q4_parity COMMAND kv_q4_parity)
@@ -362,13 +362,13 @@ index e782035d..1204e931 100644
  };
  
 diff --git a/setup.py b/setup.py
-index cf801d3e..92eea0db 100644
+index 3e9434bf..54625c0e 100644
 --- a/setup.py
 +++ b/setup.py
 @@ -269,8 +269,8 @@ CUDA12_WHEELS = ["nvidia-cublas-cu12==12.9.1.4", "nvidia-cuda-runtime-cu12==12.9
  CUDA12_COMPAT_DRIVER = 528 if WIN else 525
  ENGINE12_DIR = "engine-cuda12"
- MIN_ENGINE = (0, 1, 46)                # versions compare all numbers; v0.1.58: engine rounds 0215-0217 (tuned drafters, the file-tier re-check, prefill and Q5_0 fixes; git log c3b3f5035..HEAD); v0.1.46: the 0.2 release engine (UPDATE.bat and setup fetch it from the signed feed, #3469 #3437); v0.1.45: Qwen3.6 parallel requests and pictures, fixes #2346 #2372 #2396; v0.1.44.1: CPUs without AVX2 start again (#2324: an illegal instruction before main in the NVFP4 CPU rows), the CUDA 12.0/12.1 toolkits build (#2322), a crashed engine start is named instead of retried as a GPU runtime start, Mac M2 (#2323); v0.1.44: UD-Q4/Q5/Q6_K_XL and Q8_0 Unsloth files in setup (K-quant experts, MMQ prompt library strata_kq), NVFP4 packs, Qwen3.6-35B-A3B, Intel Arc A-series kernels, the pipelined-decode and latency work; v0.1.43.1: the adaptive overlap no longer collapses decode on pinned-host desktops (#1964 #1975), Windows PLE mmap stall (#1984), pinned prompt uploads (#1996), the I/O watchdog allowance; v0.1.43: adaptive-tier copies overlap on CUDA, P100 (sm_60) kernel tables, RDNA4 (gfx1200/gfx1201) defaults (route tail skip, measured PCIe share, 16K prompt chunks, fused IQ3 prompt experts); v0.1.42.1: the GGUF-in-place file tier on Windows unmaps every shard, dual-socket starts judge each NUMA node and STRATA_DROP_CACHE_ON_EXIT, tools/strata_bench.py; v0.1.42: STRATA_ROUTE_TAIL_SKIP=7 default on CUDA (+13-16% decode), the AMD 2-GPU checkpoint fix (H13), Phase 2 fixes and opt-ins; v0.1.41.1 (folded into 0.1.42): the #1576 card order, #1616 stage size, #1595 CPU share, #1630/#1607 Windows HIP chunk cap and commit-limit warning, #1603 parallel-request bookkeeping; v0.1.41: CPU prefill share on by default (NVIDIA, chunks < 1024), --batch-groups auto, the file tier read in batches on Windows, Pascal decode fix, per-arch tables; v0.1.40.3: the #1357 MTP router guard, the #1376 Windows HIP cache floor, #461 runtime DLLs, Intel A750 first-request fix; v0.1.40.2: F4 verify windows, the Linux file tier (#1194), the stager wait (#1057), #1264/#1201/#1139 fixes, opt-in CPU share (#1282), Intel Arc; v0.1.40: --resident-experts on a layer split with the split+resident variant (#848), --kv k8v4 with KV streaming (#711); v0.1.39: the #577 file-tier regression fixed, the OpenAI Responses API (#451, Codex), a reply stuck on one token ended (#606), the head before the arena (#620), effort_position (#458), --vram-reserve hot resize opt-in (#533), PR batch; v0.1.38: prompts faster (one gather per expert group #372, the first chunk's PLE rows beside layer 0 #374, DeltaNet three heads per thread #413), --kv q4_0 prompts on tensor cores (#452), Q5_0 experts on the GPU (#473), IQ4_XS on AVX-2 (#415), unbuffered expert loading on Windows (#357 #362), --peer-device (#531), a 6 GB card starts (#496), PR batch; v0.1.37: a silent engine is restarted (#481), Windows AMD counts the desktop's VRAM (#380 #377 #497), a steadier PCIe probe (#485), fixes #496 #495 #498 #505 #493; v0.1.36: a cancelled prompt logged as read so far (#471), the draft-head hint (#474), UPDATE.bat (#475), --expert-profile-save (#477); v0.1.35: Windows AMD uses its bundled HIP runtime (#468 #461), the low-RAM resident mode on Windows 32 GB (#467), fixes #460 #459 #446 #447 #457 #448 #444; v0.1.34: AMD on Windows (a ready-made HIP engine), an MCP server for AI assistants (tools/strata_mcp.py), a shorter README; v0.1.33: a portable image encoder again (#411 #412), setup recommends instead of forcing (#406 #403 #364 #384), fixes #352 #365 #369 #371 #375 #393 #408 #414; v0.1.32: split prompts faster (#340), AMD router +12%, Unsloth Q4 in setup, faster Q4 prompts, #326/#327/#342/#344 fixes, PR batch; v0.1.31: Unsloth UD-Q4_K_XL (experimental), GGUF-in-place low-RAM mode, Windows GGUF load 2x, server race + tokenizer fixes, AMD intrinsics; v0.1.30: short prompts faster (streaming from 1024 tokens), resident low-RAM variant, multi-GPU session carve, RDNA4; v0.1.29: sampled answers faster (split top-k), #154 correctness fixes; v0.1.28: the expert cache reserves the draft head, a cancelled request no longer fails the next; v0.1.27: RTX 20 (sm_75) in the ready-made engine, the HIP build without CUDA headers; v0.1.26: the draft layer's prompt pass in batches; v0.1.25: faster prompts (grouping off the copy engine, fused hyper-connection kernels), AMD HIP backend, --kv k8v4; v0.1.24: long prompts faster (QSA select on tensor cores); v0.1.23: image requests honor sampling, 8 GB cards start, batched verify window; v0.1.22: faster prompts (tensor-core attention), multi-GPU across images/steering/KV streaming; v0.1.21: multi-GPU layer split (--gpus); v0.1.20: system-prompt checkpoint, PCIe probe, hit rate; v0.1.19: penalties
+ MIN_ENGINE = (0, 1, 46)                # versions compare all numbers; v0.1.59: engine changes since v0.2.12 (git log 146df3c46..HEAD); v0.1.58: engine rounds 0215-0217 (tuned drafters, the file-tier re-check, prefill and Q5_0 fixes; git log c3b3f5035..HEAD); v0.1.46: the 0.2 release engine (UPDATE.bat and setup fetch it from the signed feed, #3469 #3437); v0.1.45: Qwen3.6 parallel requests and pictures, fixes #2346 #2372 #2396; v0.1.44.1: CPUs without AVX2 start again (#2324: an illegal instruction before main in the NVFP4 CPU rows), the CUDA 12.0/12.1 toolkits build (#2322), a crashed engine start is named instead of retried as a GPU runtime start, Mac M2 (#2323); v0.1.44: UD-Q4/Q5/Q6_K_XL and Q8_0 Unsloth files in setup (K-quant experts, MMQ prompt library strata_kq), NVFP4 packs, Qwen3.6-35B-A3B, Intel Arc A-series kernels, the pipelined-decode and latency work; v0.1.43.1: the adaptive overlap no longer collapses decode on pinned-host desktops (#1964 #1975), Windows PLE mmap stall (#1984), pinned prompt uploads (#1996), the I/O watchdog allowance; v0.1.43: adaptive-tier copies overlap on CUDA, P100 (sm_60) kernel tables, RDNA4 (gfx1200/gfx1201) defaults (route tail skip, measured PCIe share, 16K prompt chunks, fused IQ3 prompt experts); v0.1.42.1: the GGUF-in-place file tier on Windows unmaps every shard, dual-socket starts judge each NUMA node and STRATA_DROP_CACHE_ON_EXIT, tools/strata_bench.py; v0.1.42: STRATA_ROUTE_TAIL_SKIP=7 default on CUDA (+13-16% decode), the AMD 2-GPU checkpoint fix (H13), Phase 2 fixes and opt-ins; v0.1.41.1 (folded into 0.1.42): the #1576 card order, #1616 stage size, #1595 CPU share, #1630/#1607 Windows HIP chunk cap and commit-limit warning, #1603 parallel-request bookkeeping; v0.1.41: CPU prefill share on by default (NVIDIA, chunks < 1024), --batch-groups auto, the file tier read in batches on Windows, Pascal decode fix, per-arch tables; v0.1.40.3: the #1357 MTP router guard, the #1376 Windows HIP cache floor, #461 runtime DLLs, Intel A750 first-request fix; v0.1.40.2: F4 verify windows, the Linux file tier (#1194), the stager wait (#1057), #1264/#1201/#1139 fixes, opt-in CPU share (#1282), Intel Arc; v0.1.40: --resident-experts on a layer split with the split+resident variant (#848), --kv k8v4 with KV streaming (#711); v0.1.39: the #577 file-tier regression fixed, the OpenAI Responses API (#451, Codex), a reply stuck on one token ended (#606), the head before the arena (#620), effort_position (#458), --vram-reserve hot resize opt-in (#533), PR batch; v0.1.38: prompts faster (one gather per expert group #372, the first chunk's PLE rows beside layer 0 #374, DeltaNet three heads per thread #413), --kv q4_0 prompts on tensor cores (#452), Q5_0 experts on the GPU (#473), IQ4_XS on AVX-2 (#415), unbuffered expert loading on Windows (#357 #362), --peer-device (#531), a 6 GB card starts (#496), PR batch; v0.1.37: a silent engine is restarted (#481), Windows AMD counts the desktop's VRAM (#380 #377 #497), a steadier PCIe probe (#485), fixes #496 #495 #498 #505 #493; v0.1.36: a cancelled prompt logged as read so far (#471), the draft-head hint (#474), UPDATE.bat (#475), --expert-profile-save (#477); v0.1.35: Windows AMD uses its bundled HIP runtime (#468 #461), the low-RAM resident mode on Windows 32 GB (#467), fixes #460 #459 #446 #447 #457 #448 #444; v0.1.34: AMD on Windows (a ready-made HIP engine), an MCP server for AI assistants (tools/strata_mcp.py), a shorter README; v0.1.33: a portable image encoder again (#411 #412), setup recommends instead of forcing (#406 #403 #364 #384), fixes #352 #365 #369 #371 #375 #393 #408 #414; v0.1.32: split prompts faster (#340), AMD router +12%, Unsloth Q4 in setup, faster Q4 prompts, #326/#327/#342/#344 fixes, PR batch; v0.1.31: Unsloth UD-Q4_K_XL (experimental), GGUF-in-place low-RAM mode, Windows GGUF load 2x, server race + tokenizer fixes, AMD intrinsics; v0.1.30: short prompts faster (streaming from 1024 tokens), resident low-RAM variant, multi-GPU session carve, RDNA4; v0.1.29: sampled answers faster (split top-k), #154 correctness fixes; v0.1.28: the expert cache reserves the draft head, a cancelled request no longer fails the next; v0.1.27: RTX 20 (sm_75) in the ready-made engine, the HIP build without CUDA headers; v0.1.26: the draft layer's prompt pass in batches; v0.1.25: faster prompts (grouping off the copy engine, fused hyper-connection kernels), AMD HIP backend, --kv k8v4; v0.1.24: long prompts faster (QSA select on tensor cores); v0.1.23: image requests honor sampling, 8 GB cards start, batched verify window; v0.1.22: faster prompts (tensor-core attention), multi-GPU across images/steering/KV streaming; v0.1.21: multi-GPU layer split (--gpus); v0.1.20: system-prompt checkpoint, PCIe probe, hit rate; v0.1.19: penalties
 -# KV bytes per context token and attention layer: 8-bit 1056, rotated 4-bit 576, hybrid K8V4 (8-bit K, 4-bit V) 816
 -KV_CELL_BYTES = {"q4_0": 576, "k8v4": 816}
 +# KV bytes per context token and attention layer: 8-bit 1056, rotated 4-bit 576, rotated 2-bit 320, rotated 3-bit 448, hybrid K8V4 (8-bit K, 4-bit V) 816
@@ -376,7 +376,7 @@ index cf801d3e..92eea0db 100644
  PY_PACKAGES = ["numpy", "jinja2", "regex", "pyyaml", "tqdm", "requests", "pillow", "psutil"]
  REQUIREMENTS = ROOT / "requirements.txt"   # the same packages and their dependencies, pinned (#214)
  BUILD_PACKAGES = ["cmake", "ninja"]
-@@ -7848,8 +7848,8 @@ UD_FIT_MIN_SLACK_MIB = 64         # at least a few cache slots beside the estima
+@@ -7902,8 +7902,8 @@ UD_FIT_MIN_SLACK_MIB = 64         # at least a few cache slots beside the estima
  UD_FIT_CARD_GB = 9.5              # the check is for cards up to here
  UD_FIT_RUNTIME_MIB = 250          # CUDA / HIP: the runtime's own context (the SYCL measurement above has none of it)
  UD_FIT_ENGINE_RESERVE_MIB = 300   # the reserve the engine settles on when none is given and the card is tight
@@ -387,7 +387,7 @@ index cf801d3e..92eea0db 100644
  UD_FIT_CTX_STEPS = (8192, 6144, 4608)
  
  
-@@ -9962,9 +9962,11 @@ def main() -> int:
+@@ -10173,9 +10173,11 @@ def main() -> int:
      ap.add_argument("--rope-scale", type=float,
                      help="the extension factor, finite and >= 1 (default: the final context over the trained "
                           "262144, at least 1 - 1.5 for 384K, 2 for 512K, 1 inside the trained range)")
@@ -401,7 +401,7 @@ index cf801d3e..92eea0db 100644
      ap.add_argument("--vision", choices=["yes", "no", "none", "gpu", "cpu"],
                      help="let the model read images (on by default where the model can; yes = the best reader for this card: the CPU "
                           "under 24 GB of VRAM, the GPU from 24 GB, any make; gpu / cpu = that reader; no = text only)")
-@@ -10670,10 +10672,17 @@ def main() -> int:
+@@ -10878,10 +10880,17 @@ def main() -> int:
      if ctx > 8192 and not a.kv and not a.yes:
          say()
          say("  KV cache precision (the model's memory of the conversation):")
@@ -849,7 +849,7 @@ index 5403cdc2..b6ad6f6a 100644
                                        vcur_ + t * NKV * HD, s, cs, &st_.host);
                  else if (st_.kv_int8)
 diff --git a/src/core/verify.cpp b/src/core/verify.cpp
-index af6179c7..189f51a6 100644
+index 61b32ded..e9e0b442 100644
 --- a/src/core/verify.cpp
 +++ b/src/core/verify.cpp
 @@ -45,6 +45,8 @@
@@ -1152,10 +1152,10 @@ index 00000000..397e9e04
 +}  // namespace strata::kernels
 diff --git a/src/kernels/cuda/kv_turbo3.cu b/src/kernels/cuda/kv_turbo3.cu
 new file mode 100644
-index 00000000..774dc6ad
+index 00000000..d276fa37
 --- /dev/null
 +++ b/src/kernels/cuda/kv_turbo3.cu
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,206 @@
 +// src/kernels/cuda/kv_turbo3.cu - see include/strata/kernels/kv_turbo3.hpp. 3-bit KV on kv_q4.hpp's rotation.
 +// The kernels mirror kv_turbo.cu one for one (same grids, same device-side page/step indirection, same host-copy
 +// and staging writes); only the group quantizer and the block layout differ (8 levels, 14-byte blocks, a 3-bit
@@ -1187,7 +1187,13 @@ index 00000000..774dc6ad
 +// The packing is a warp-wide OR of each lane's disjoint 3-bit field qc << 3*lane, held in a 128-bit accumulator
 +// (the fields never overlap, so OR is associative and every lane ends with the identical 96-bit stream - the
 +// same stream the host reference builds byte by byte).
-+__device__ __forceinline__ uint16_t turbo3_group(float x, int lane, uint8_t* bytes) {
++// The group's result as three integers: the scale plus the 96-bit code stream in its two halves. Deliberately
++// NOT a byte array — an address-taken `uint8_t bytes[12]` lands on the stack (STACK 16 on sm_86) and the spill
++// guard (tools/check_cuda_spills.py) wants STACK 0 from every kernel. The store below takes the byte it wants
++// straight out of the two halves.
++struct Turbo3Group { uint16_t d; unsigned long long lo; unsigned long long hi; };
++
++__device__ __forceinline__ Turbo3Group turbo3_group(float x, int lane) {
 +    float amax = fabsf(x);
 +#pragma unroll
 +    for (int o = 16; o > 0; o >>= 1) amax = fmaxf(amax, __shfl_xor_sync(0xffffffffu, amax, o));
@@ -1204,18 +1210,15 @@ index 00000000..774dc6ad
 +        hi |= __shfl_xor_sync(0xffffffffu, hi, o);
 +        acc = ((unsigned __int128) hi << 64) | (unsigned __int128) lo;
 +    }
-+    const unsigned long long lo = (unsigned long long) acc, hi = (unsigned long long) (acc >> 64);
-+#pragma unroll
-+    for (int j = 0; j < 12; ++j)
-+        bytes[j] = j < 8 ? (uint8_t) (lo >> (8 * j)) : (uint8_t) (hi >> (8 * (j - 8)));
-+    return dbits;
++    return {dbits, (unsigned long long) acc, (unsigned long long) (acc >> 64)};
 +}
 +
-+__device__ __forceinline__ void turbo3_store(uint8_t* pool, long long row, int b, int lane, uint16_t d,
-+                                             const uint8_t* bytes) {
++__device__ __forceinline__ void turbo3_store(uint8_t* pool, long long row, int b, int lane, const Turbo3Group& g) {
 +    block_turbo3* blk = reinterpret_cast<block_turbo3*>(pool + row * (long long) sizeof(block_turbo3) * 8) + b;
-+    if (lane == 0) blk->d = d;
-+    if (lane < 12) blk->qs[lane] = bytes[lane];
++    if (lane == 0) blk->d = g.d;
++    // byte j of the 96-bit stream: the low half carries bytes 0..7, the high half bytes 8..11
++    if (lane < 12)
++        blk->qs[lane] = lane < 8 ? (uint8_t) (g.lo >> (8 * lane)) : (uint8_t) (g.hi >> (8 * (lane - 8)));
 +}
 +
 +// One block = one 32-value group of one KV head of K (plane 0) or V (plane 1) for token step_idx; 32 threads.
@@ -1230,14 +1233,13 @@ index 00000000..774dc6ad
 +    const int h = blockIdx.x, b = blockIdx.y, t = threadIdx.x;
 +    const long long step_off = (long long) step_idx * kv_heads * head_dim;
 +    const float x = (is_v ? vcur : kcur)[step_off + h * head_dim + b * KV_TURBO3_GROUP + t];
-+    uint8_t bytes[12];
-+    const uint16_t d = turbo3_group(x, t, bytes);
++    const Turbo3Group g = turbo3_group(x, t);
 +    const long long page = (long long) table[pos / page_size];
 +    if (page >= 0)
-+        turbo3_store(is_v ? v_turbo3 : k_turbo3, (page * kv_heads + h) * page_size + (pos % page_size), b, t, d, bytes);
++        turbo3_store(is_v ? v_turbo3 : k_turbo3, (page * kv_heads + h) * page_size + (pos % page_size), b, t, g);
 +    if (host.k_turbo3 != nullptr)
 +        turbo3_store(is_v ? host.v_turbo3 : host.k_turbo3, ((pos / page_size) * kv_heads + h) * page_size + (pos % page_size),
-+                     b, t, d, bytes);
++                     b, t, g);
 +}
 +
 +// The prompt path: grid (T, kv_heads, groups), K then V; also into the staging pool (identity layout) when given.
@@ -1251,14 +1253,13 @@ index 00000000..774dc6ad
 +    const int h = blockIdx.y, b = blockIdx.z, th = threadIdx.x;
 +    const bool is_v = is_v_grid != 0;
 +    const float x = (is_v ? V : K)[t * (kv_heads * head_dim) + h * head_dim + b * KV_TURBO3_GROUP + th];
-+    uint8_t bytes[12];
-+    const uint16_t d = turbo3_group(x, th, bytes);
++    const Turbo3Group g = turbo3_group(x, th);
 +    const long long page = (long long) table[pos / page_size];
 +    const long long row_id = ((pos / page_size) * kv_heads + h) * page_size + (pos % page_size);
 +    if (page >= 0)
-+        turbo3_store(is_v ? v_turbo3 : k_turbo3, (page * kv_heads + h) * page_size + (pos % page_size), b, th, d, bytes);
-+    if (host.k_turbo3 != nullptr) turbo3_store(is_v ? host.v_turbo3 : host.k_turbo3, row_id, b, th, d, bytes);
-+    if (stage.k_turbo3 != nullptr) turbo3_store(is_v ? stage.v_turbo3 : stage.k_turbo3, row_id, b, th, d, bytes);
++        turbo3_store(is_v ? v_turbo3 : k_turbo3, (page * kv_heads + h) * page_size + (pos % page_size), b, th, g);
++    if (host.k_turbo3 != nullptr) turbo3_store(is_v ? host.v_turbo3 : host.k_turbo3, row_id, b, th, g);
++    if (stage.k_turbo3 != nullptr) turbo3_store(is_v ? stage.v_turbo3 : stage.k_turbo3, row_id, b, th, g);
 +}
 +
 +// The 3-bit unpack of value `e` of a group's bitstream (byte (3e)>>3, shift (3e)&7; shifts 6 and 7 straddle the
@@ -1362,7 +1363,7 @@ index 00000000..774dc6ad
 +
 +}  // namespace strata::kernels
 diff --git a/src/kernels/cuda/qsa_decode_attn.cu b/src/kernels/cuda/qsa_decode_attn.cu
-index fbbef636..ec0b6a2b 100644
+index 410ae38a..4db98c97 100644
 --- a/src/kernels/cuda/qsa_decode_attn.cu
 +++ b/src/kernels/cuda/qsa_decode_attn.cu
 @@ -5,6 +5,8 @@
@@ -1374,7 +1375,7 @@ index fbbef636..ec0b6a2b 100644
  #if defined(STRATA_HIP_GFX906)
  #include "strata/kernels/gfx_arch.hpp"
  #endif
-@@ -76,6 +78,36 @@ __device__ __forceinline__ void load8_q4(const QsaAttnPools& p, bool value, long
+@@ -77,6 +79,36 @@ __device__ __forceinline__ void load8_q4(const QsaAttnPools& p, bool value, long
          for (int k = 0; k < 8; ++k) out[k] = (float) ((int)(bytes[k] >> 4) - 8) * d;
      }
  }
@@ -1411,7 +1412,7 @@ index fbbef636..ec0b6a2b 100644
  template <int KV_MODE>
  __device__ __forceinline__ void load8(const QsaAttnPools& p, bool value, long long row, int d0, float* out) {
      if constexpr (KV_MODE == 0) load8_f16(p, value, row, d0, out);
-@@ -85,7 +117,13 @@ __device__ __forceinline__ void load8(const QsaAttnPools& p, bool value, long lo
+@@ -86,7 +118,13 @@ __device__ __forceinline__ void load8(const QsaAttnPools& p, bool value, long lo
          // reads the Q4_0 pool instead of dereferencing the null v_q (no call site does today; PR review)
          if (value) load8_q4(p, value, row, d0, out);
          else load8_q8(p, value, row, d0, out);
@@ -1425,8 +1426,8 @@ index fbbef636..ec0b6a2b 100644
 +    else load8_q4(p, value, row, d0, out);
  }
  
- // Exact-intent score reduce-scatter: the same butterfly pairs as twelve warp_sum calls,
-@@ -265,9 +303,27 @@ __device__ __forceinline__ void attn_chunk_body(const float* __restrict__ q, Qsa
+ // One cell's G probabilities (G/4 broadcast float4 loads) into the G accumulators: every accumulator takes one fmaf,
+@@ -307,9 +345,27 @@ __device__ __forceinline__ void attn_chunk_body(const float* __restrict__ q, Qsa
          float v;
          if constexpr (KV_MODE == 0) {
              v = __half2float(__ushort_as_half(p.v_pool[srow[c] * HD + t]));
@@ -1455,7 +1456,7 @@ index fbbef636..ec0b6a2b 100644
          } else {   // modes 2 and 3: V is rotated Q4_0 (kv_q4.hpp); the caller rotates the output back
              constexpr int bytes_per_head = (HD / QK4_0) * sizeof(block_q4_0);
              const int b = t / QK4_0;
-@@ -525,9 +581,27 @@ template <int KV_MODE>
+@@ -562,9 +618,27 @@ template <int KV_MODE>
  __device__ __forceinline__ float load_v1(const QsaAttnPools& p, long long row, int d) {
      if constexpr (KV_MODE == 0) {
          return __half2float(__ushort_as_half(p.v_pool[row * HD + d]));
@@ -1484,7 +1485,7 @@ index fbbef636..ec0b6a2b 100644
      } else {   // modes 2 and 3: V is rotated Q4_0 (kv_q4.hpp); the caller rotates the output back
          constexpr int bytes_per_head = (HD / QK4_0) * sizeof(block_q4_0);
          const int b = d / QK4_0;
-@@ -917,9 +991,11 @@ bool lane_cell_attn() {
+@@ -947,9 +1021,11 @@ bool lane_cell_attn() {
      return on;
  }
  
@@ -1498,7 +1499,7 @@ index fbbef636..ec0b6a2b 100644
  }
  
  // STRATA_ATTN_MERGE_V2: 1 merges with attn_merge_v2_kernel, 0 with attn_merge_kernel.  Unset it follows
-@@ -947,8 +1023,9 @@ void launch_merge(int v2, const float* part_acc, const float* part_m, const floa
+@@ -977,8 +1053,9 @@ void launch_merge(int v2, const float* part_acc, const float* part_m, const floa
  // kernel where it is built (the parity harness: never the environment).
  void launch_chunks_batch(const float* q, const QsaAttnPools& pools, const int32_t* ids, const int32_t* steps,
                           int64_t cap, const QsaShapes& s, float* scratch, int64_t n_q, cudaStream_t st, int kernel) {
@@ -1510,7 +1511,7 @@ index fbbef636..ec0b6a2b 100644
      const int n_chunks = (int) ((cap + CHUNK - 1) / CHUNK);
      // per query: [acc: n_chunks*n_head*HD][m: n_chunks*n_head][l: n_chunks*n_head], all offsets from one stride
      const long long stride = (long long) qsa_decode_attn_scratch_floats(cap, s);
-@@ -978,7 +1055,10 @@ void launch_chunks_batch(const float* q, const QsaAttnPools& pools, const int32_
+@@ -1008,7 +1085,10 @@ void launch_chunks_batch(const float* q, const QsaAttnPools& pools, const int32_
  #endif
  #define STRATA_ATTN_LC(M) attn_chunk_kernel<M, true><<<grid, THREADS, 0, st>>>(q, pools, ids, steps, (int) s.n_head_kv, (int) s.page_size, scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride)
      if (lane_cell) {
@@ -1522,7 +1523,7 @@ index fbbef636..ec0b6a2b 100644
          else if (kv_mode == 2) STRATA_ATTN_LC(2);
          else if (kv_mode == 1) STRATA_ATTN_LC(1);
          else STRATA_ATTN_LC(0);
-@@ -1020,7 +1100,19 @@ void launch_chunks_batch(const float* q, const QsaAttnPools& pools, const int32_
+@@ -1050,7 +1130,19 @@ void launch_chunks_batch(const float* q, const QsaAttnPools& pools, const int32_
                                                            scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride);
      else
  #endif
@@ -1543,7 +1544,7 @@ index fbbef636..ec0b6a2b 100644
          STRATA_ATTN_CHUNK_SEL(3, pre)<<<grid, THREADS, 0, st>>>(q, pools, ids, steps, (int) s.n_head_kv,
                                                                  (int) s.page_size, scale, part_acc, part_m, part_l,
                                                                  n_chunks, (int) cap, stride);
-@@ -1106,12 +1198,18 @@ bool qsa_decode_attn_slots(const float* q, const QsaAttnSlotPools& pools, const
+@@ -1136,12 +1228,18 @@ bool qsa_decode_attn_slots(const float* q, const QsaAttnSlotPools& pools, const
      cudaStream_t st = (cudaStream_t) stream;
  #define STRATA_ATTN_SLOTS(M, LC) attn_chunk_slots_kernel<M, LC><<<grid, THREADS, 0, st>>>(q, pools, ids, steps, (int) s.n_head_kv, (int) s.page_size, scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride)
      if (lane_cell) {
@@ -1564,7 +1565,7 @@ index fbbef636..ec0b6a2b 100644
          else if (kv_mode == 2) STRATA_ATTN_SLOTS(2, false);
          else if (kv_mode == 1) STRATA_ATTN_SLOTS(1, false);
          else STRATA_ATTN_SLOTS(0, false);
-@@ -1136,8 +1234,9 @@ void qsa_decode_attn_batch_rows(const float* q, const QsaAttnPoolsRows& rows, co
+@@ -1166,8 +1264,9 @@ void qsa_decode_attn_batch_rows(const float* q, const QsaAttnPoolsRows& rows, co
          std::fprintf(stderr, "qsa_decode_attn_batch_rows: unsupported geometry or missing buffers\n");
          std::exit(1);
      }
@@ -1576,7 +1577,7 @@ index fbbef636..ec0b6a2b 100644
      const int n_chunks = (int) ((cap + CHUNK - 1) / CHUNK);
      const long long stride = (long long) qsa_decode_attn_scratch_floats(cap, s);
      float* part_acc = scratch;
-@@ -1165,7 +1264,10 @@ void qsa_decode_attn_batch_rows(const float* q, const QsaAttnPoolsRows& rows, co
+@@ -1195,7 +1294,10 @@ void qsa_decode_attn_batch_rows(const float* q, const QsaAttnPoolsRows& rows, co
      }
  #define STRATA_ATTN_ROWS(M) attn_chunk_rows_kernel<M><<<grid, THREADS, 0, st>>>(q, rows, ids, steps, (int) s.n_head_kv, \
          (int) s.page_size, scale, part_acc, part_m, part_l, n_chunks, (int) cap, stride)
@@ -1588,7 +1589,7 @@ index fbbef636..ec0b6a2b 100644
      else if (kv_mode == 2) STRATA_ATTN_ROWS(2);
      else if (kv_mode == 1) STRATA_ATTN_ROWS(1);
      else STRATA_ATTN_ROWS(0);
-@@ -1191,11 +1293,16 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
+@@ -1221,11 +1323,16 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
          std::fprintf(stderr, "qsa_decode_attn: unsupported geometry or missing buffers\n");
          std::exit(1);
      }
@@ -1610,7 +1611,7 @@ index fbbef636..ec0b6a2b 100644
          std::fprintf(stderr, "qsa_decode_attn: incomplete KV pools\n");
          std::exit(1);
      }
-@@ -1212,7 +1319,16 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
+@@ -1242,7 +1349,16 @@ void qsa_decode_attn_step(const float* q, const QsaAttnPools& pools, const int32
                                                            scale, part_acc, part_m, part_l, n_chunks, 0, 0);
      else
  #endif
@@ -2649,10 +2650,10 @@ index 00000000..ec9bf9aa
 +    return 1;
 +}
 diff --git a/src/prefill/gdn_chunk.cu b/src/prefill/gdn_chunk.cu
-index 0db55020..c11eea25 100644
+index cff7cb0f..a64cfda4 100644
 --- a/src/prefill/gdn_chunk.cu
 +++ b/src/prefill/gdn_chunk.cu
-@@ -510,6 +510,8 @@ int gdn_chunk_cc_of(int dev) {
+@@ -512,6 +512,8 @@ int gdn_chunk_cc_of(int dev) {
  }
  
  int gdn_chunk_cc() {
@@ -2662,7 +2663,7 @@ index 0db55020..c11eea25 100644
      if (cudaGetDevice(&dev) != cudaSuccess) {
          cudaGetLastError();
 diff --git a/src/prefill/prefill.cpp b/src/prefill/prefill.cpp
-index 0ef3cce9..284f7490 100644
+index 0c6896da..13654847 100644
 --- a/src/prefill/prefill.cpp
 +++ b/src/prefill/prefill.cpp
 @@ -41,6 +41,8 @@
@@ -2674,7 +2675,7 @@ index 0ef3cce9..284f7490 100644
  #include "strata/core/layer.hpp"
  #include "strata/core/native_dense.hpp"
  #include "strata/core/native_head.hpp"
-@@ -1316,13 +1318,23 @@ void take_stage(Alloc& o_borrowed, const core::SessionState& ss, const strata::k
+@@ -1325,13 +1327,23 @@ void take_stage(Alloc& o_borrowed, const core::SessionState& ss, const strata::k
      own.owned = o_borrowed.owned;
      Alloc& o = stage_own() ? own : o_borrowed;
      const size_t rows = (size_t) q0.n_pages * s.n_head_kv * s.page_size;
@@ -2699,7 +2700,7 @@ index 0ef3cce9..284f7490 100644
      } else if (q0.kv_int8) {
          st.k_q = o.take<int8_t>(rows * s.head_dim, ok);
          st.v_q = o.take<int8_t>(rows * s.head_dim, ok);
-@@ -1336,7 +1348,8 @@ void take_stage(Alloc& o_borrowed, const core::SessionState& ss, const strata::k
+@@ -1345,7 +1357,8 @@ void take_stage(Alloc& o_borrowed, const core::SessionState& ss, const strata::k
  strata::kernels::QsaAttnPools pools_of(const strata::kernels::KvHostPools& h, const int32_t* table) {
      strata::kernels::QsaAttnPools p;
      p.k_pool = h.k_pool; p.v_pool = h.v_pool; p.k_q = h.k_q; p.v_q = h.v_q; p.k_scale = h.k_scale; p.v_scale = h.v_scale;
@@ -2709,7 +2710,7 @@ index 0ef3cce9..284f7490 100644
      p.page_table = table;
      return p;
  }
-@@ -2272,6 +2285,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
+@@ -2281,6 +2294,7 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
      if (st.kv_mode != 0 && !(st.kv_mode == 2 && ring_ok))
          return decline(st.kv_mode == 2 ? "the drafter's K/V is a ring and STRATA_MTP_BATCH_RING=0" : "the drafter's K/V mode is not paged/ring");
      if (st.kv_hybrid) return decline("the drafter's K/V is hybrid (kv_hybrid)");
@@ -2717,7 +2718,7 @@ index 0ef3cce9..284f7490 100644
      if (mtp.device() != m.device) return decline("the drafter is on another device than this prefill path");
      const auto t0 = Clock::now();
      const core::ModelGeometry& g = *m.g;
-@@ -2407,7 +2421,11 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
+@@ -2416,7 +2430,11 @@ bool Prefill::draft_kv(core::MtpDrafter& mtp, const float* R_rows, const int32_t
              strata::kernels::fwht256_inplace_cuda(Kc, nb * g.n_head_kv, m.cs);
              strata::kernels::fwht256_inplace_cuda(Vc, nb * g.n_head_kv, m.cs);
          }
@@ -2730,7 +2731,7 @@ index 0ef3cce9..284f7490 100644
              strata::kernels::kv_append_q4(st.k_q4, st.v_q4, st.page_table, c0, nb, Kc, Vc, s, m.cs, &st.host);
          } else {
              kv_append(Kc, Vc, nb, c0, st.page_table, s.page_size, st.kv_int8 ? nullptr : st.k_pool,
-@@ -4336,7 +4354,26 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
+@@ -4345,7 +4363,26 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
                              strata::kernels::fwht256_inplace_cuda(m.Kc, T * 2, m.cs);
                              strata::kernels::fwht256_inplace_cuda(m.Vc, T * 2, m.cs);
                          }
@@ -2758,7 +2759,7 @@ index 0ef3cce9..284f7490 100644
                              strata::kernels::kv_append_q4(st.k_q4, st.v_q4, st.page_table, p0, T, m.Kc, m.Vc, s, m.cs,
                                                            host_w, staged ? &m.stage : nullptr);
                          else
-@@ -6862,7 +6899,6 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
+@@ -6872,7 +6909,6 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
          return (size_t) depth < sg.stage_ss.size() && sg.stage_ss[(size_t) depth] != nullptr ? sg.stage_ss[(size_t) depth] : m.ss;
      };
      core::SessionState* ssp = ss_of(0);
@@ -2766,7 +2767,7 @@ index 0ef3cce9..284f7490 100644
      int64_t n = 0;                       // all the prompts' tokens
      for (const Seg& sg : segs) n += sg.n;
      const int64_t pos0 = segs[0].pos0;   // (only the progress line's)
-@@ -6941,7 +6977,6 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
+@@ -6951,7 +6987,6 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
      auto ple_gather = [&m, &segs, &ss_of, &prev0s, &sub_at](int64_t gi, int buf, std::string& e) -> bool {
          const LmSub& sb = sub_at(gi);
          const int64_t* tokens = segs[(size_t) sb.seg].tokens;
@@ -2774,7 +2775,7 @@ index 0ef3cce9..284f7490 100644
          const int64_t c0 = sb.c0, T = sb.T;
          const std::array<int32_t, 2>& prev0 = prev0s[(size_t) sb.seg];
          auto at = [&](int64_t i) { return i < 2 ? prev0[(size_t) i] : (int32_t) tokens[i - 2]; };
-@@ -7695,7 +7730,25 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
+@@ -7705,7 +7740,25 @@ bool Prefill::lm_run(const std::vector<Seg>& segs, int depth, const std::vector<
                                  strata::kernels::fwht256_inplace_cuda(m.Kc, T * 2, cs);
                                  strata::kernels::fwht256_inplace_cuda(m.Vc, T * 2, cs);
                              }
@@ -2802,7 +2803,7 @@ index 0ef3cce9..284f7490 100644
                                                                host_w, staged ? &m.stage : nullptr);
                              else
 diff --git a/src/program/generate.cpp b/src/program/generate.cpp
-index 03113d5a..184ad42f 100644
+index 7416f4e1..57e7655d 100644
 --- a/src/program/generate.cpp
 +++ b/src/program/generate.cpp
 @@ -76,6 +76,8 @@
@@ -2827,7 +2828,7 @@ index 03113d5a..184ad42f 100644
                   "  --kv k8v4            hybrid: INT8 K (exact attention scores) + rotated Q4_0 V, 816 B/cell\n"
                   "                       (vs int8's 1,056); streams with --kv-resident too\n"
                   "  --kv-resident N      KV streaming: keep N cells of each QSA layer in VRAM (min 20480) and the\n"
-@@ -4272,18 +4280,21 @@ int main(int argc, char** argv) {
+@@ -4303,18 +4311,21 @@ int main(int argc, char** argv) {
          return 2;
      }
      if (o.kv == "q4") o.kv = "q4_0";
@@ -2851,7 +2852,7 @@ index 03113d5a..184ad42f 100644
      strata::core::qsa_set_kv_hybrid(o.kv == "k8v4");   // K8V4: INT8 K + rotated Q4_0 V, 816 B/cell
      if (o.kv_resident < 0) {
          std::fprintf(stderr, "strata generate: --kv-resident must be >= 0\n");
-@@ -6203,7 +6214,7 @@ int main(int argc, char** argv) {
+@@ -6274,7 +6285,7 @@ int main(int argc, char** argv) {
          //
          // chunk_bytes uses a no-alloc fake SessionState.  qsa_state_init is NOT used: with base=nullptr it would
          // cudaMemcpy a null page table and kv_stream_reset a null map (CUDA "invalid argument") on a streamed
@@ -2860,7 +2861,7 @@ index 03113d5a..184ad42f 100644
          // fields directly, replicating kv_plan's arithmetic (layer.cpp:634) with the public getters.
          auto chunk_bytes = [&](int64_t lb, int64_t c) -> uint64_t {
              strata::core::qsa_set_kv_resident(o.kv_resident);
-@@ -6216,8 +6227,11 @@ int main(int argc, char** argv) {
+@@ -6287,8 +6298,11 @@ int main(int argc, char** argv) {
                  if (r < pages) mode = 1;
              }
              const bool q4 = strata::core::qsa_kv_q4();
@@ -2873,7 +2874,7 @@ index 03113d5a..184ad42f 100644
              std::vector<strata::core::QsaState> qs((size_t) g.n_qsa_layers());
              for (int64_t j = 0; j < g.n_qsa_layers(); ++j) {
                  qs[(size_t) j].max_cells = o.max_context;
-@@ -6225,7 +6239,10 @@ int main(int argc, char** argv) {
+@@ -6296,7 +6310,10 @@ int main(int argc, char** argv) {
                  qs[(size_t) j].n_pages = pages;
                  qs[(size_t) j].kv_int8 = i8;
                  qs[(size_t) j].kv_q4 = q4;
@@ -2884,7 +2885,7 @@ index 03113d5a..184ad42f 100644
              }
              strata::core::SessionState ss{};
              ss.max_cells = o.max_context;
-@@ -8106,7 +8123,6 @@ int main(int argc, char** argv) {
+@@ -8200,7 +8217,6 @@ int main(int argc, char** argv) {
      uint64_t per_layer_bytes = 0;
      if (native_pack && o.expert_cache > 0 && o.expert_cache_per_layer) {
          const size_t free_b = strata::core::device_free_bytes();   // the same reading the shared-cache sizing uses
@@ -2892,7 +2893,7 @@ index 03113d5a..184ad42f 100644
          const int asked = o.expert_cache;
          const uint64_t budget = (uint64_t) asked * nibble_max_slot_bytes();
          size_t free_room = free_b > ((size_t) o.vram_reserve_mib << 20) ? free_b - ((size_t) o.vram_reserve_mib << 20) : 0;
-@@ -8132,7 +8148,6 @@ int main(int argc, char** argv) {
+@@ -8226,7 +8242,6 @@ int main(int argc, char** argv) {
      } else if (native_pack && o.expert_cache > 0 && !profile.empty()) {
          size_t free_b = 0, total_b = 0;
          free_b = strata::core::device_free_bytes(); (void) total_b;
@@ -2900,7 +2901,7 @@ index 03113d5a..184ad42f 100644
          // what the uniform sizing granted, in the 256-byte slots the loop below counts: the blob formats of 1280 / 2560
          // rows are whole multiples of 256 already; an NVFP4 blob's 16-byte scale tail is not, and the unrounded budget
          // held one slot fewer than asked (--expert-cache 1: none)
-@@ -8229,7 +8244,6 @@ int main(int argc, char** argv) {
+@@ -8323,7 +8338,6 @@ int main(int argc, char** argv) {
              if (keep_bytes <= 0) { o.expert_cache = 0; sized_slots.clear(); return false; }
              if (per_layer_bytes > 0) {
                  // Cutting the list short would put one layer's blob in the next layer's range.
@@ -2908,7 +2909,7 @@ index 03113d5a..184ad42f 100644
                  int64_t q = keep_bytes / (int64_t) per_layer_bytes;
                  if (q > g.n_expert) q = g.n_expert;
                  sized_slots.clear();
-@@ -15288,7 +15302,7 @@ int main(int argc, char** argv) {
+@@ -15382,7 +15396,7 @@ int main(int argc, char** argv) {
              // every slot done: the last commits have run before anything reads a slot (between windows nothing does)
              if (pmtp && !pipe_inflight() && !batch_on() && !pmtp_settle()) return false;
              if (!pipe_inflight() && !batch_on() && bt_windows > 0) {   // all idle: the timing line, as batch_step
@@ -2917,7 +2918,7 @@ index 03113d5a..184ad42f 100644
                  p4.span_end(wall);
                  pc.flush(wall, pc_ex());
                  char pa_txt[160] = "";
-@@ -19516,6 +19530,16 @@ int main(int argc, char** argv) {
+@@ -19603,6 +19617,16 @@ int main(int argc, char** argv) {
                      if (st.kv_q4) {
                          const int64_t q4b = (int64_t) strata::kernels::kv_q4_bytes_per_head((int) qs.head_dim);
                          a = {{h ? st.host.k_q4 : st.k_q4, q4b}, {h ? st.host.v_q4 : st.v_q4, q4b}};
@@ -2935,10 +2936,10 @@ index 03113d5a..184ad42f 100644
                          const int64_t q4b = (int64_t) strata::kernels::kv_q4_bytes_per_head((int) qs.head_dim);
                          a = {{h ? st.host.k_q : st.k_q, kvb}, {h ? st.host.v_q4 : st.v_q4, q4b},
 diff --git a/strata_cli/launch/catalog.py b/strata_cli/launch/catalog.py
-index 61bc914b..66437c52 100644
+index 88f0d648..af0e2073 100644
 --- a/strata_cli/launch/catalog.py
 +++ b/strata_cli/launch/catalog.py
-@@ -482,7 +482,7 @@ class Catalog:
+@@ -496,7 +496,7 @@ class Catalog:
      def kv_gb(self, tokens: int, kv: str = "int8") -> float:
          """The conversation memory for this many tokens, in GB (setup.py's UD_FIT_KV_BYTES: 13 attention layers)."""
          mod = self.strata.setup_module()
@@ -2948,10 +2949,10 @@ index 61bc914b..66437c52 100644
  
      def max_context(self, family: str, model: str, hw: dict | None = None) -> int | None:
 diff --git a/strata_cli/launch/cmd.py b/strata_cli/launch/cmd.py
-index 5fd58eb1..ade2f045 100644
+index 5ae148be..2c3cefcd 100644
 --- a/strata_cli/launch/cmd.py
 +++ b/strata_cli/launch/cmd.py
-@@ -92,7 +92,7 @@ def add_parsers(sp: argparse._SubParsersAction) -> list[argparse.ArgumentParser]
+@@ -90,7 +90,7 @@ def add_parsers(sp: argparse._SubParsersAction) -> list[argparse.ArgumentParser]
                     help="with --data-dir: move the models you already have into the new folder. Without it nothing is moved: your models stay "
                          "where they are and stay usable, and the new folder gets the new downloads")
      g.add_argument("--context", type=_context, metavar="SIZE", help="how much text it remembers at once: 32k, 64k, 128k, 256k or a number of tokens (DeepSeek-V4.1-Flash: up to 512k and 1m)")
@@ -2961,10 +2962,10 @@ index 5fd58eb1..ade2f045 100644
                     help="let the model read pictures. Default: on when the model can read pictures and the engine has the picture reader. "
                          "'on' picks the reader by your graphics memory: the CPU reader under 24 GB, the GPU reader from 24 GB (any make); "
 diff --git a/strata_cli/launch/screens.py b/strata_cli/launch/screens.py
-index 25104df4..70383e02 100644
+index 4427523c..ae8de527 100644
 --- a/strata_cli/launch/screens.py
 +++ b/strata_cli/launch/screens.py
-@@ -957,6 +957,9 @@ class ContextScreen(Base):
+@@ -958,6 +958,9 @@ class ContextScreen(Base):
          kv = self.kv()
          label = {"int8": "8-bit (recommended: what the published numbers were measured with)",
                   "q4_0": "4-bit (half the memory, a little less precise on long documents)",
@@ -2974,7 +2975,7 @@ index 25104df4..70383e02 100644
                   "k8v4": "mixed 8-bit and 4-bit", "fp16": "full precision"}.get(kv, kv)
          small = (s.context or 0) <= 8192
          self.query_one("#kvline", Static).update(Text(
-@@ -978,7 +981,7 @@ class ContextScreen(Base):
+@@ -979,7 +982,7 @@ class ContextScreen(Base):
  
      def action_memory(self) -> None:
          s = self.ctx.settings
@@ -2997,10 +2998,10 @@ index 5ef0b758..9309b12a 100644
  
  #: How many requests the card can answer at once (the spec's "fit to card" default): by graphics memory.
 diff --git a/tests/terminal/test_launch_tui.py b/tests/terminal/test_launch_tui.py
-index e0a299bd..082e9102 100644
+index e49f7d2a..ae37ce86 100644
 --- a/tests/terminal/test_launch_tui.py
 +++ b/tests/terminal/test_launch_tui.py
-@@ -413,7 +413,9 @@ class ContextStep(Base):
+@@ -416,7 +416,9 @@ class ContextStep(Base):
              self.assertIn("4-bit", t)
              self.assertIn("+0.2 GB", t)                               # 32K at 4-bit
              await press(pilot, "m")
